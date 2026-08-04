@@ -2,25 +2,54 @@
   "name": "kalloud",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
+    "predev": "node scripts/ensure-db.mjs && node scripts/migrate.mjs up && node scripts/seed.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/migrate.mjs status",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "node scripts/migrate.mjs up",
+    "db:migrate:status": "node scripts/migrate.mjs status",
+    "db:seed": "node scripts/seed.mjs",
+    "db:reset": "node scripts/reset-db.mjs",
+    "test": "vitest run --project unit --project integration",
+    "test:watch": "vitest --project unit --project integration",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "setup": "node scripts/ensure-db.mjs && node scripts/migrate.mjs up && node scripts/seed.mjs"
   },
   "dependencies": {
-    "@types/node": "22.10.2",
-    "@types/react": "19.0.2",
-    "@types/react-dom": "19.0.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "lucide-react": "^0.468.0",
-    "next": "15.1.0",
-    "react": "19.0.0",
-    "pg": "^8.13.1",
-    "react-dom": "19.0.0",
-    "typescript": "^5.7.2"
+    "next": "16.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "pg": "^8.22.0",
+    "bcryptjs": "^3.0.3",
+    "zod": "^4.4.3",
+    "lucide-react": "^1.28.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.2.0",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^22.20.1",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.1",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.0",
+    "eslint-config-prettier": "^10.1.1",
+    "prettier": "^3.9.6",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
 }

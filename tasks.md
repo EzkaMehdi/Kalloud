@@ -238,11 +238,12 @@ Toutes les tâches de cette phase sont `P0`. Traiter `DEC-01` en premier, puis p
   - Acceptation : une base vide et une base existante convergent vers le même schéma ; les migrations sont idempotentes au niveau attendu.
   - Réalisé : `migrations/000{1..4}_*.sql` + `scripts/migrate.mjs` (`up`/`status`) ; inclut le schéma `SEC-01`, `SEC-02` et `CFG-00`.
 
-- [ ] **`FND-06` — Créer un bootstrap de base cohérent**
+- [x] **`FND-06` — Créer un bootstrap de base cohérent**
   - Priorité : `P0`
   - Dépend de : `FND-05`, `DEC-03`, `DEC-04`, `DEC-06`
   - Livrable : seed minimal, journée initiale ou parcours d’ouverture, tables et catalogue de développement.
   - Acceptation : une installation fraîche peut encaisser sans exécuter manuellement un fichier SQL.
+  - Réalisé : `scripts/seed.mjs` (idempotent) — organisation/établissement, réglages, classes fiscales, catalogue, 7 tables (sans « Comptoir » fictif, conforme à `DEC-03`), journée déjà ouverte, 3 comptes de développement `OWNER`/`MANAGER`/`CASHIER`. `pnpm run predev` valide le parcours complet depuis zéro.
 
 - [ ] **`FND-07` — Consolider l’API et la couche métier**
   - Priorité : `P0`

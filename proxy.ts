@@ -20,6 +20,11 @@ const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const MAX_REQUEST_BODY_BYTES = 1_000_000; // 1MB hard ceiling; routes enforce a tighter limit for their own payloads.
 
 function withSecurityHeaders(response: NextResponse, request: NextRequest): NextResponse {
+  const scriptSrc =
+    process.env.NODE_ENV === "development"
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : "script-src 'self' 'unsafe-inline'";
+
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("X-Frame-Options", "DENY");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
@@ -28,7 +33,7 @@ function withSecurityHeaders(response: NextResponse, request: NextRequest): Next
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
+      scriptSrc,
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data:",

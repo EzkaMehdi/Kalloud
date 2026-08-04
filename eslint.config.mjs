@@ -13,10 +13,6 @@ const config = [
       "test-results/**",
       "next-env.d.ts",
       "migrations/**",
-      // TODO(FND-07): remove once server/index.js (Express) is replaced by
-      // Next.js Route Handlers; kept temporarily so lint stays actionable
-      // during the migration instead of failing on code slated for deletion.
-      "server/**",
     ],
   },
   ...nextCoreWebVitals,

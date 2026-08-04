@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // Unlike Next.js, Vitest does not load .env files on its own. scripts/ use
@@ -19,6 +20,11 @@ try {
  * `pnpm test:integration`.
  */
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL(".", import.meta.url)),
+    },
+  },
   test: {
     projects: [
       {

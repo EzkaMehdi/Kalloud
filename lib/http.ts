@@ -120,3 +120,27 @@ export async function readJsonBody<T = unknown>(
     throw new ValidationError("Le corps de la requête n'est pas un JSON valide.");
   }
 }
+
+/** Parses a dynamic route segment (always a string) into a positive integer id, or throws a clean 400. */
+export function parseIdParam(value: string, label = "identifiant"): number {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new ValidationError(`${label} invalide : "${value}".`);
+  }
+  return id;
+}
+
+/**
+ * Next.js Route Handlers do not expose a ready-made client IP (unlike some
+ * platform-specific middleware APIs); `x-forwarded-for` is set by every
+ * reverse proxy/CDN this app is expected to run behind (OPS-05). Returns
+ * null rather than a guess when absent, so callers (rate limiting, audit)
+ * treat "unknown" honestly instead of silently using a wrong address.
+ */
+export function getClientIp(request: NextRequest): string | null {
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    return forwardedFor.split(",")[0]?.trim() || null;
+  }
+  return request.headers.get("x-real-ip");
+}

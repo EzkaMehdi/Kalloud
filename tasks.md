@@ -245,60 +245,66 @@ Toutes les tâches de cette phase sont `P0`. Traiter `DEC-01` en premier, puis p
   - Acceptation : une installation fraîche peut encaisser sans exécuter manuellement un fichier SQL.
   - Réalisé : `scripts/seed.mjs` (idempotent) — organisation/établissement, réglages, classes fiscales, catalogue, 7 tables (sans « Comptoir » fictif, conforme à `DEC-03`), journée déjà ouverte, 3 comptes de développement `OWNER`/`MANAGER`/`CASHIER`. `pnpm run predev` valide le parcours complet depuis zéro.
 
-- [ ] **`FND-07` — Consolider l’API et la couche métier**
+- [x] **`FND-07` — Consolider l’API et la couche métier**
   - Priorité : `P0`
   - Dépend de : `DEC-02`, `FND-04`, `FND-05`
   - Livrable : architecture retenue, services métier testables et accès base centralisé.
   - Acceptation : aucune règle métier importante dans un composant React ; les endpoints délèguent à des services.
+  - Réalisé : 21 Route Handlers sous `app/api/**`, chacun un contrôleur mince délégant à `lib/repositories/*` et `lib/services/*` ; contrôle statique dans `tests/unit/architecture.test.ts`.
 
-- [ ] **`FND-08` — Supprimer les URL `localhost` du client**
+- [x] **`FND-08` — Supprimer les URL `localhost` du client**
   - Priorité : `P0`
   - Dépend de : `FND-07`
   - Livrable : appels same-origin ou configuration d’environnement validée.
   - Acceptation : aucun `http://localhost:3001` dans le code client ; fonctionnement HTTPS et depuis un second appareil vérifié.
+  - Réalisé : `lib/client/api.ts` (fetch same-origin unique) ; toutes les pages/composants migrés.
 
-- [ ] **`FND-09` — Ajouter contrat d’erreur et healthchecks**
+- [x] **`FND-09` — Ajouter contrat d’erreur et healthchecks**
   - Priorité : `P0`
   - Dépend de : `FND-07`
   - Livrable : wrapper async, middleware d’erreur, erreurs JSON stables, `/health/live` et `/health/ready`.
   - Acceptation : une base indisponible produit `503` sans arrêter le processus ; aucune erreur SQL sensible n’est renvoyée.
+  - Réalisé : `lib/http.ts` (`apiRoute`, enveloppe `{error:{code,message,requestId}}`), `app/api/health/live`, `app/api/health/ready`.
 
-- [ ] **`FND-10` — Fournir une commande de démarrage unique**
+- [x] **`FND-10` — Fournir une commande de démarrage unique**
   - Priorité : `P0`
   - Dépend de : `FND-06`, `FND-07`, `FND-08`, `FND-09`
   - Livrable : scripts base + migrations + application.
   - Acceptation : un nouveau développeur démarre le projet avec les commandes du README uniquement.
+  - Réalisé : `pnpm install && pnpm dev` (hook `predev` : `ensure-db` + `migrate` + `seed`) documenté dans `README.md`.
 
-- [ ] **`FND-11` — Créer la CI de qualité**
+- [x] **`FND-11` — Créer la CI de qualité**
   - Priorité : `P0`
   - Dépend de : `FND-03`, `FND-04`, `FND-05`
   - Livrable : pipeline install, migrations de test, lint, format, typecheck, tests, build et audit.
   - Acceptation : une étape en échec bloque la fusion ; rapports de tests et de sécurité conservés.
+  - Réalisé : `.github/workflows/ci.yml`, vérifié en conditions réelles (run GitHub Actions vert, ~1m54s, 7/7 E2E).
 
-- [ ] **`FND-12` — Écrire le README d’exploitation**
+- [x] **`FND-12` — Écrire le README d’exploitation**
   - Priorité : `P1`
   - Dépend de : `FND-10`, `FND-11`
   - Livrable : prérequis, installation, variables, migrations, scripts, tests et dépannage.
   - Acceptation : procédure testée depuis une copie neuve.
 
-- [ ] **`FND-13` — Reformater le code condensé**
+- [x] **`FND-13` — Reformater le code condensé**
   - Priorité : `P1`
   - Dépend de : `FND-03`
   - Livrable : pages et composants lisibles, types extraits lorsque réutilisés, imports inutiles retirés.
   - Acceptation : aucune modification fonctionnelle ; lint et tests inchangés au vert.
 
-- [ ] **`FND-14` — Séparer strictement données de démo et production**
+- [x] **`FND-14` — Séparer strictement données de démo et production**
   - Priorité : `P0`
   - Dépend de : `FND-06`, `FND-07`
   - Livrable : déplacement de `database/demo-reset.sql` vers des fixtures protégées, environnement dédié et badge permanent.
   - Acceptation : aucun fallback local plausible lorsque l’API échoue ; aucune donnée démo chargée en production ; un reset destructif refuse de s’exécuter hors environnement démo/test.
+  - Réalisé : `database/demo-reset.sql` supprimé (remplacé par `scripts/seed.mjs`, idempotent, dev/test uniquement) ; `scripts/reset-db.mjs` refuse de s’exécuter hors hôte local sauf `ALLOW_DESTRUCTIVE_DB_RESET=true` explicite ; `lib/client/api.ts` ne comporte aucun repli local sur panne API (redirection `/login` sur 401, état d’erreur explicite sinon).
 
 ### `GATE-1` — Projet reproductible
 
-- [ ] Base neuve, migrations et application démarrent sans action manuelle cachée.
-- [ ] Build, typecheck, lint, tests et audit passent en CI.
-- [ ] Une panne de base n’arrête pas le serveur.
-- [ ] Aucun artefact ou secret local n’est suivi par Git.
+- [x] Base neuve, migrations et application démarrent sans action manuelle cachée.
+- [x] Build, typecheck, lint, tests et audit passent en CI.
+- [x] Une panne de base n’arrête pas le serveur.
+- [x] Aucun artefact ou secret local n’est suivi par Git.
 
 ## 7. Phase 2 — Sécurité, isolation et fondations UX
 
@@ -327,99 +333,113 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Acceptation : valeurs obligatoires, validées et disponibles dans le contexte serveur avant tout calcul financier.
   - Réalisé : `migrations/0002_location_settings.sql` (`location_settings`, `tax_classes`) ; exposition dans le contexte serveur via `lib/context` (voir `SEC-04`).
 
-- [ ] **`SEC-03` — Ajouter l’authentification**
+- [x] **`SEC-03` — Ajouter l’authentification**
   - Priorité : `P0`
   - Dépend de : `SEC-01`, `FND-07`
   - Livrable : choix d’auth documenté, connexion, déconnexion, réinitialisation, stockage de mot de passe sûr si applicable, session sécurisée, expiration et révocation.
   - Acceptation : toute page et tout endpoint métier exige une session valide ; rotation/révocation testée ; protection contre la force brute définie.
+  - Réalisé : `lib/auth/*` (sessions en base, bcrypt, jetons à hash unique, réinitialisation par jeton, révocation totale sur reset), pages `login`/`forgot-password`/`reset-password`. Testé dans `tests/integration/auth.test.ts` (11 cas) et `tests/e2e/auth.spec.ts`.
 
-- [ ] **`SEC-04` — Construire le contexte de requête**
+- [x] **`SEC-04` — Construire le contexte de requête**
   - Priorité : `P0`
   - Dépend de : `SEC-02`, `SEC-03`
   - Livrable : résolution serveur de l’utilisateur, organisation, établissement et rôle.
   - Acceptation : le client ne peut pas imposer librement un `location_id`.
+  - Réalisé : `lib/context.ts` (`getRequestContext`/`requireRequestContext`), exclusivement dérivé du cookie de session validé.
 
-- [ ] **`SEC-05` — Appliquer les autorisations par rôle**
+- [x] **`SEC-05` — Appliquer les autorisations par rôle**
   - Priorité : `P0`
   - Dépend de : `SEC-04`, `DEC-07`
   - Livrable : guards réutilisables et matrice codée.
   - Acceptation : chaque mutation sensible vérifie le rôle côté serveur ; les refus renvoient `403`.
+  - Réalisé : `lib/authz.ts` (`can`/`requirePermission`), matrice testée ligne à ligne dans `tests/unit/authz.test.ts` contre `DEC-07`.
 
-- [ ] **`SEC-06` — Scoper toutes les requêtes par établissement**
+- [x] **`SEC-06` — Scoper toutes les requêtes par établissement**
   - Priorité : `P0`
   - Dépend de : `SEC-04`
   - Livrable : point d’accès base unique exigeant le contexte d’établissement, repositories scopés et contrôle empêchant les requêtes métier directes.
   - Acceptation : aucune lecture, agrégation ou mutation globale non justifiée ; tests ou contrôle statique détectent un accès non scopé.
+  - Réalisé : `lib/repositories/*` (chaque fonction exige `locationId`), contrôle statique dans `tests/unit/architecture.test.ts` (aucun `.query()` direct sous `app/api/**`) ; garantie prouvée à l’exécution par `SEC-08`.
 
-- [ ] **`SEC-07` — Durcir l’exposition HTTP**
+- [x] **`SEC-07` — Durcir l’exposition HTTP**
   - Priorité : `P0`
   - Dépend de : `SEC-03`, `FND-08`
   - Livrable : CORS same-origin ou allowlist, en-têtes de sécurité, limites de corps, cookies sécurisés, protection CSRF et limitation de débit sur authentification/mutations sensibles.
   - Acceptation : aucune origine arbitraire ne peut appeler une mutation authentifiée ; tentatives répétées limitées et journalisées.
+  - Réalisé : `proxy.ts` (CSP/HSTS/X-Frame-Options, vérification d’origine, limite de débit, limite de taille de corps) + `lib/auth/rate-limit.ts` (verrou par e-mail/IP journalisé en base).
 
-- [ ] **`SEC-08` — Tester l’isolation des tenants**
+- [x] **`SEC-08` — Tester l’isolation des tenants**
   - Priorité : `P0`
   - Dépend de : `SEC-05`, `SEC-06`, `FND-04`
   - Livrable : tests positifs et négatifs entre deux organisations.
   - Acceptation : toutes les tentatives de lecture ou modification croisée échouent.
+  - Réalisé : `tests/integration/tenant-isolation.test.ts` (14 cas, couche repository/service) + `tests/e2e/tenant-isolation.spec.ts` (couche HTTP complète).
 
-- [ ] **`SEC-09` — Créer le journal d’audit métier**
+- [x] **`SEC-09` — Créer le journal d’audit métier**
   - Priorité : `P0`
   - Dépend de : `SEC-04`, `SEC-05`, `FND-05`
   - Livrable : `audit_events` avec auteur, établissement, action, cible, avant/après et date.
   - Acceptation : service réutilisable et non modifiable par les rôles opérationnels.
+  - Réalisé : `lib/audit.ts` (`recordAuditEvent`/`listAuditEvents`, aucune fonction de mise à jour/suppression exposée) ; appelé depuis l’encaissement, la clôture et les mouvements de caisse.
 
-- [ ] **`OPS-01` — Ajouter logs structurés et corrélation**
+- [x] **`OPS-01` — Ajouter logs structurés et corrélation**
   - Priorité : `P0`
   - Dépend de : `FND-09`, `SEC-04`
   - Livrable : identifiant de requête, utilisateur, établissement, route, durée et résultat.
   - Acceptation : une erreur d’encaissement peut être suivie du navigateur jusqu’à la base sans exposer de secret.
+  - Réalisé : `lib/logger.ts` (JSON structuré via `AsyncLocalStorage`, champs sensibles redacted), `x-request-id` propagé dans les réponses.
 
 ### Fondations UX et accessibilité
 
-- [ ] **`UX-01` — Standardiser les états asynchrones**
+- [x] **`UX-01` — Standardiser les états asynchrones**
   - Priorité : `P0`
   - Dépend de : `FND-09`, `FND-14`, `DEC-08`
   - Livrable : composants/patterns chargement, vide, erreur, retry, succès et hors-ligne.
   - Acceptation : aucun `catch(() => {})` silencieux ; aucune valeur démo présentée après une panne.
+  - Réalisé : `lib/client/api.ts`, `lib/client/use-async-data.ts`, `components/ui/async-section.tsx` ; appliqué à `caisse`, `stock`, `bilan`. Le mode hors-ligne complet (`DEC-08`) reste hors MVP ; les échecs réseau produisent un état d’erreur explicite avec nouvelle tentative.
 
-- [ ] **`UX-02` — Créer un composant de dialogue accessible**
+- [x] **`UX-02` — Créer un composant de dialogue accessible**
   - Priorité : `P0`
   - Dépend de : `FND-03`
   - Livrable : `dialog`, titre associé, `aria-modal`, focus initial, piège de focus, Échap et restauration du focus.
   - Acceptation : les trois tiroirs actuels utilisent ce composant et restent utilisables au clavier.
+  - Réalisé : `components/ui/dialog.tsx` (natif `<dialog>` + `showModal()`) ; adopté par `order-drawer`, `close-day-modal`, `cash-movement-modal`.
 
-- [ ] **`UX-03` — Corriger noms, états et annonces accessibles**
+- [x] **`UX-03` — Corriger noms, états et annonces accessibles**
   - Priorité : `P0`
   - Dépend de : `FND-03`
   - Livrable : labels, `aria-current`, `aria-pressed`/radios, noms des boutons icône et régions live.
   - Acceptation : tous les contrôles ont un nom ; erreurs et confirmations dynamiques sont annoncées.
+  - Réalisé : `aria-current="page"` sur la nav active, `role="radiogroup"`/`aria-checked` sur catégories/paiement/mouvement, noms accessibles sur tous les boutons icône, régions `role="status"`/`role="alert"`, lien d’évitement (`skip-link`).
 
-- [ ] **`UX-04` — Corriger contraste et responsive**
+- [x] **`UX-04` — Corriger contraste et responsive**
   - Priorité : `P1`
   - Dépend de : `FND-03`
   - Livrable : couleurs WCAG AA, breakpoint tablette revu, navigation avec safe areas.
   - Acceptation : aucun chevauchement à 320, 375, 700, 768 et 1024 px ; texte normal au moins `4,5:1`, composants graphiques/contrôles au moins `3:1`, notamment les valeurs initiales auditées à `4,15:1`, `3,09:1`, `2,69:1` et `1,20:1`.
+  - Réalisé : `--muted` `#718078→#526058` (6,62:1), `--line-strong` `#7f8c83` pour les bordures de champ (3,51:1), palier 700/900px au lieu d’un seul breakpoint à 700px, `safe-area-inset-bottom` sur la navigation et les feuilles, anneau `:focus-visible` global.
 
-- [ ] **`UX-05` — Standardiser les formulaires et erreurs**
+- [x] **`UX-05` — Standardiser les formulaires et erreurs**
   - Priorité : `P0`
   - Dépend de : `UX-01`, `UX-03`
   - Livrable : champs requis, validation inline, `aria-invalid`, erreurs liées et conservation de la saisie.
   - Acceptation : aucune erreur uniquement globale ou uniquement colorée.
+  - Réalisé : `components/ui/text-field.tsx` (label réel, `aria-invalid`, `aria-describedby`) utilisé par les formulaires d’authentification et les modales de caisse.
 
-- [ ] **`UX-06` — Normaliser le vocabulaire**
+- [x] **`UX-06` — Normaliser le vocabulaire**
   - Priorité : `P0`
   - Dépend de : `DEC-03`, `DEC-04`, `DEC-06`
   - Livrable : libellés cohérents pour ticket, commande, vente, service, clôture, vente directe et catégories.
   - Acceptation : suppression des promesses trompeuses « temps réel » et « ticket en cours » tant qu’elles ne sont pas vraies.
+  - Réalisé : « Ticket en cours » → « Nouvelle commande »/« Occupée » (n’implique plus une persistance qui n’existe pas encore) ; « Inventaire en temps réel » retiré ; « Nouvelle journée » → « Clôturer le service » ; rôles affichés via `ROLE_LABELS` (`lib/authz.ts`).
 
 ### `GATE-2` — Périmètre sécurisé
 
-- [ ] Toutes les routes métier exigent une session.
-- [ ] Toutes les requêtes sont limitées à l’établissement courant.
-- [ ] Les rôles sont vérifiés côté serveur.
-- [ ] Les écrans ne masquent plus les pannes.
-- [ ] Les primitives d’interface respectent le clavier et les noms accessibles.
+- [x] Toutes les routes métier exigent une session.
+- [x] Toutes les requêtes sont limitées à l’établissement courant.
+- [x] Les rôles sont vérifiés côté serveur.
+- [x] Les écrans ne masquent plus les pannes.
+- [x] Les primitives d’interface respectent le clavier et les noms accessibles.
 
 ## 8. Phase 3 — Intégrité transactionnelle
 

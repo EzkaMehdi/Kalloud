@@ -154,6 +154,17 @@ async function seed(client) {
 }
 
 async function main() {
+  // FND-14: demo data must never land in a production environment, even if
+  // someone runs this script manually against the wrong DATABASE_URL.
+  if (process.env.NODE_ENV === "production" && process.env.ALLOW_DEMO_SEED !== "true") {
+    console.error(
+      "[seed] Refusing to seed demo data with NODE_ENV=production. " +
+        "If this really is an isolated demo/staging environment, re-run with ALLOW_DEMO_SEED=true.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     console.error("[seed] DATABASE_URL is not set.");

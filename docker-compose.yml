@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kalloud-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kalloud
+      POSTGRES_USER: kalloud
+      POSTGRES_PASSWORD: kalloud_dev_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - kalloud_postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kalloud -d kalloud"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  kalloud_postgres_data:

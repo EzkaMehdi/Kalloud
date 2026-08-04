@@ -35,6 +35,13 @@ export default defineConfig({
           name: "integration",
           environment: "node",
           include: ["tests/integration/**/*.test.ts"],
+          env: {
+            // lib/db.ts's pool reads DATABASE_URL at import time. Forcing it
+            // to the dedicated test database here (rather than in each test
+            // file) guarantees every module under test - not just the test
+            // file itself - talks to kalloud_test, never local dev data.
+            DATABASE_URL: process.env.DATABASE_URL_TEST ?? "",
+          },
           globalSetup: ["./tests/integration/global-setup.ts"],
           // Integration tests share one Postgres database and mutate/reset
           // real tables; running them concurrently would race on the same

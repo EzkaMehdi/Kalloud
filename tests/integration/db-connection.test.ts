@@ -5,15 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 /**
  * Minimal example proving the integration test tier (`FND-04`) can reach a
  * real PostgreSQL instance, mutate it, and reset the slice of state it
- * touched. Richer integration tests (migrations, repositories, route
- * handlers) are added alongside `FND-05`/`FND-06` once the real schema and
- * a dedicated `kalloud_test` database exist; this test intentionally stays
- * schema-agnostic so it keeps working through that migration.
+ * touched, independently of the real application schema (vitest.config.ts
+ * points DATABASE_URL at the dedicated kalloud_test database for this
+ * whole project). Richer, schema-aware integration tests live alongside
+ * the repositories/services they exercise (see tests/integration/auth.test.ts).
  */
 const connectionString =
-  process.env.DATABASE_URL_TEST ??
   process.env.DATABASE_URL ??
-  "postgresql://kalloud:kalloud_dev_password@localhost:5433/kalloud";
+  "postgresql://kalloud:kalloud_dev_password@localhost:5433/kalloud_test";
 
 const tableName = `_vitest_smoke_${randomUUID().replace(/-/g, "")}`;
 let pool: Pool;

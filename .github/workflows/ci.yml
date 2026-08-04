@@ -48,18 +48,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # DATABASE_URL_TEST intentionally points at the same ephemeral CI
-      # database as DATABASE_URL: unlike local dev there is no persistent
-      # developer data to protect from the integration suite's truncation,
-      # and a second database would need extra provisioning this single
-      # Postgres service does not support out of the box. Values are fixed
-      # literals defined in this file, not derived from any event input.
+      # Writes an actual .env file (not just $GITHUB_ENV): scripts/*.mjs are
+      # invoked with `node --env-file=.env`, which reads a real file on disk
+      # and errors if one is not present, and Next.js's own build/dev
+      # commands auto-load the same file. DATABASE_URL_TEST intentionally
+      # points at the same ephemeral CI database as DATABASE_URL: unlike
+      # local dev there is no persistent developer data to protect from the
+      # integration suite's truncation, and a second database would need
+      # extra provisioning this single Postgres service does not support
+      # out of the box. Values are fixed literals defined in this file, not
+      # derived from any event input.
       - name: Configure environment
         run: |
           {
             echo "DATABASE_URL=postgresql://kalloud:kalloud_dev_password@localhost:5433/kalloud"
             echo "DATABASE_URL_TEST=postgresql://kalloud:kalloud_dev_password@localhost:5433/kalloud"
-          } >> "$GITHUB_ENV"
+          } >> .env
 
       - name: Lint
         run: pnpm lint

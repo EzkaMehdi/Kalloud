@@ -1,7 +1,20 @@
 "use client";
-import { Minus, Plus, X } from "lucide-react";
-import { useMemo, useState } from "react";
 
+import { Minus, Plus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Dialog } from "@/components/ui/dialog";
+import { ApiError, apiFetch } from "@/lib/client/api";
+
+/**
+ * TODO(SALE-01, SALE-04 — phase 3): this catalog is a local constant, not
+ * the real, scoped product list from /api/products, and its ids do not
+ * reliably match the seeded catalog (audit finding P0-03). Loading the real
+ * catalog here — so the product shown, the price charged and the stock
+ * decremented are always the same row — is exactly SALE-04's job. Left
+ * as-is for phase 1/2, which only had to make the *checkout call itself*
+ * authenticated and location-scoped (SEC-03/SEC-04/SEC-06), not rebuild the
+ * sales UI's data source.
+ */
 const products = [
   { id: 1, name: "Chicha Signature", price: 25, cat: "Chichas" },
   { id: 2, name: "Chicha Classique", price: 20, cat: "Chichas" },
@@ -12,7 +25,14 @@ const products = [
   { id: 6, name: "Tiramisu maison", price: 7, cat: "Desserts" },
 ];
 const cats = ["Tout", "Chichas", "Boissons", "Plats", "Desserts"];
+const paymentOptions = [
+  { value: "CB", label: "CB" },
+  { value: "Espèces", label: "Espèces" },
+  { value: "Mixte", label: "Mixte" },
+] as const;
+
 type Item = { id: number; name: string; price: number; quantity: number };
+
 export function OrderDrawer({
   table,
   tableId,
@@ -26,132 +46,145 @@ export function OrderDrawer({
 }) {
   const [category, setCategory] = useState("Tout");
   const [items, setItems] = useState<Item[]>([]);
-  const [payment, setPayment] = useState("CB");
+  const [payment, setPayment] = useState<(typeof paymentOptions)[number]["value"]>("CB");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
   const filtered = products.filter((p) => category === "Tout" || p.cat === category);
-  const total = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
-  function add(p: { id: number; name: string; price: number }) {
+  const total = useMemo(
+    () => items.reduce((sum, item) => sum + item.price * item.quantity, 0),
+    [items],
+  );
+
+  function add(product: { id: number; name: string; price: number }) {
     setItems((old) => {
-      const exists = old.find((i) => i.id === p.id);
-      return exists
-        ? old.map((i) => (i.id === p.id ? { ...i, quantity: i.quantity + 1 } : i))
-        : [...old, { ...p, quantity: 1 }];
+      const existing = old.find((item) => item.id === product.id);
+      return existing
+        ? old.map((item) =>
+            item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+          )
+        : [...old, { ...product, quantity: 1 }];
     });
   }
-  function delta(name: string, n: number) {
+
+  function delta(name: string, change: number) {
     setItems((old) =>
-      old.flatMap((i) =>
-        i.name !== name ? [i] : i.quantity + n > 0 ? [{ ...i, quantity: i.quantity + n }] : [],
+      old.flatMap((item) =>
+        item.name !== name
+          ? [item]
+          : item.quantity + change > 0
+            ? [{ ...item, quantity: item.quantity + change }]
+            : [],
       ),
     );
   }
+
   async function checkout() {
     setSaving(true);
     setError("");
     try {
       const method = payment === "CB" ? "CARD" : payment === "Espèces" ? "CASH" : "MIXED";
-      const response = await fetch("http://localhost:3001/api/checkout", {
+      await apiFetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tableId,
-          items: items.map((i) => ({ productId: i.id, quantity: i.quantity })),
+          items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
           paymentMethod: method,
           cashAmount: method === "CASH" ? total : 0,
           cardAmount: method === "CARD" ? total : 0,
         }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Erreur d’encaissement");
       onComplete(total);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur d’encaissement");
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
     } finally {
       setSaving(false);
     }
   }
+
   return (
-    <div className="modal-backdrop">
-      <div className="drawer">
-        <div className="drawer-handle" />
-        <div className="drawer-title">
-          <div>
-            <span className="eyebrow">Ticket en cours</span>
-            <h2>{table}</h2>
-          </div>
-          <button className="icon-button" onClick={onClose}>
-            <X size={19} />
+    <Dialog title={table} eyebrow="Nouvelle commande" onClose={onClose}>
+      <div className="product-cats" role="tablist" aria-label="Catégories de produits">
+        {cats.map((cat) => (
+          <button
+            key={cat}
+            role="tab"
+            aria-selected={category === cat}
+            onClick={() => setCategory(cat)}
+            className={`cat ${category === cat ? "active" : ""}`}
+          >
+            {cat}
           </button>
-        </div>
-        <div className="product-cats">
-          {cats.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCategory(c)}
-              className={`cat ${category === c ? "active" : ""}`}
-            >
-              {c}
-            </button>
-          ))}
-        </div>
-        <div className="products">
-          {filtered.map((p) => (
-            <button onClick={() => add(p)} className="product" key={p.name}>
-              <b>{p.name}</b>
-              <span>{p.price.toFixed(2)} €</span>
-            </button>
-          ))}
-        </div>
-        <div className="ticket">
-          <h2>Votre commande</h2>
-          {items.length === 0 ? (
-            <p className="stock-meta">Touchez un article pour l’ajouter au ticket.</p>
-          ) : (
-            items.map((i) => (
-              <div className="ticket-line" key={i.name}>
-                <div>
-                  <b>{i.name}</b>
-                  <div className="quantity">
-                    <button onClick={() => delta(i.name, -1)}>
-                      <Minus size={14} />
-                    </button>
-                    {i.quantity}
-                    <button onClick={() => delta(i.name, 1)}>
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                </div>
-                <b>{(i.price * i.quantity).toFixed(2)} €</b>
-              </div>
-            ))
-          )}
-          <div className="ticket-total">
-            <span>Total</span>
-            <span>{total.toFixed(2)} €</span>
-          </div>
-        </div>
-        <div className="checkout">
-          {["CB", "Espèces", "Mixte"].map((p) => (
-            <button
-              key={p}
-              className={`pay-option ${payment === p ? "active" : ""}`}
-              onClick={() => setPayment(p)}
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-        {error && <p className="form-error">{error}</p>}
-        <button
-          disabled={!items.length || saving}
-          onClick={checkout}
-          className="primary-button"
-          style={{ width: "100%", marginTop: 12, opacity: items.length ? 1 : 0.45 }}
-        >
-          {saving ? "Encaissement…" : `Encaisser · ${total.toFixed(2)} €`}
-        </button>
+        ))}
       </div>
-    </div>
+      <div className="products">
+        {filtered.map((product) => (
+          <button onClick={() => add(product)} className="product" key={product.id}>
+            <b>{product.name}</b>
+            <span>{product.price.toFixed(2)} €</span>
+          </button>
+        ))}
+      </div>
+      <div className="ticket">
+        <h2>Articles sélectionnés</h2>
+        {items.length === 0 ? (
+          <p className="stock-meta">Touchez un article pour l&apos;ajouter.</p>
+        ) : (
+          items.map((item) => (
+            <div className="ticket-line" key={item.name}>
+              <div>
+                <b>{item.name}</b>
+                <div className="quantity">
+                  <button
+                    onClick={() => delta(item.name, -1)}
+                    aria-label={`Retirer un ${item.name}`}
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <span aria-live="polite">{item.quantity}</span>
+                  <button
+                    onClick={() => delta(item.name, 1)}
+                    aria-label={`Ajouter un ${item.name}`}
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+              </div>
+              <b>{(item.price * item.quantity).toFixed(2)} €</b>
+            </div>
+          ))
+        )}
+        <div className="ticket-total">
+          <span>Total</span>
+          <span>{total.toFixed(2)} €</span>
+        </div>
+      </div>
+      <div className="checkout" role="radiogroup" aria-label="Moyen de paiement">
+        {paymentOptions.map((option) => (
+          <button
+            key={option.value}
+            role="radio"
+            aria-checked={payment === option.value}
+            className={`pay-option ${payment === option.value ? "active" : ""}`}
+            onClick={() => setPayment(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      )}
+      <button
+        disabled={!items.length || saving}
+        onClick={checkout}
+        className="primary-button"
+        style={{ width: "100%", marginTop: 12, opacity: items.length ? 1 : 0.45 }}
+      >
+        {saving ? "Encaissement…" : `Encaisser · ${total.toFixed(2)} €`}
+      </button>
+    </Dialog>
   );
 }

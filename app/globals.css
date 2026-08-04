@@ -5,8 +5,11 @@
 }
 :root {
   --ink: #17231d;
-  --muted: #718078;
+  /* UX-04: darkened from #718078 (4.15:1) to meet WCAG AA 4.5:1 for normal text on white (6.62:1). */
+  --muted: #526058;
   --line: #e8ebe8;
+  /* UX-04: for input/interactive borders, where non-text contrast needs >= 3:1 (was #e8ebe8 at 1.20:1). */
+  --line-strong: #7f8c83;
   --paper: #f8f9f7;
   --white: #fff;
   --forest: #173d31;
@@ -29,6 +32,36 @@ select {
 button {
   cursor: pointer;
   border: 0;
+}
+/* UX-03/UX-04: a visible keyboard focus indicator everywhere, not just on .input. */
+:focus-visible {
+  outline: 2px solid var(--forest);
+  outline-offset: 2px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link {
+  position: fixed;
+  top: -100%;
+  left: 12px;
+  z-index: 100;
+  background: var(--forest);
+  color: white;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+.skip-link:focus {
+  top: 12px;
 }
 .shell {
   min-height: 100vh;
@@ -70,6 +103,30 @@ button {
   color: #805d36;
   font-size: 13px;
   font-weight: 700;
+  flex-shrink: 0;
+}
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.user-menu-info {
+  text-align: right;
+  line-height: 1.3;
+  display: none;
+}
+.user-menu-info strong {
+  display: block;
+  font-size: 13px;
+}
+.user-menu-info small {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (min-width: 480px) {
+  .user-menu-info {
+    display: block;
+  }
 }
 .page-head {
   display: flex;
@@ -133,7 +190,7 @@ h2 {
   min-height: 48px;
   padding: 0 14px;
   border-radius: 13px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: #fff;
   color: var(--ink);
   outline: none;
@@ -142,6 +199,22 @@ h2 {
 .input:focus {
   border-color: #8cb29b;
   box-shadow: 0 0 0 3px #dfeee2;
+}
+.input[aria-invalid="true"] {
+  border-color: #bd4e46;
+}
+.field-error {
+  display: block;
+  color: #bd4e46;
+  font-size: 11px;
+  margin-top: 5px;
+  font-weight: 600;
+}
+.field-hint {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
 }
 .modal-help {
   color: var(--muted);
@@ -379,8 +452,8 @@ h2 {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 76px;
-  padding: 9px max(16px, calc((100vw - 1480px) / 2));
+  height: calc(76px + env(safe-area-inset-bottom));
+  padding: 9px max(16px, calc((100vw - 1480px) / 2)) max(9px, env(safe-area-inset-bottom));
   display: flex;
   justify-content: space-around;
   background: #fffefaee;
@@ -412,37 +485,44 @@ h2 {
   width: 29px;
   height: 29px;
 }
-.modal-backdrop {
+/*
+ * UX-02: components/ui/dialog.tsx renders a native <dialog>, opened with
+ * showModal() (implicit role="dialog"/aria-modal, native focus trap,
+ * Escape-to-close and focus restoration). This just gives it the same
+ * bottom-sheet look the old .modal-backdrop/.drawer pair had.
+ */
+dialog.sheet {
   position: fixed;
-  inset: 0;
-  z-index: 20;
-  background: #14231a55;
-  display: flex;
-  align-items: flex-end;
-}
-.drawer {
+  inset: auto 0 0 0;
+  margin: 0;
   width: 100%;
   max-height: 94vh;
   overflow: auto;
+  border: 0;
   border-radius: 24px 24px 0 0;
   background: var(--paper);
-  padding: 20px 16px 30px;
+  padding: 20px 16px max(20px, env(safe-area-inset-bottom));
+  color: var(--ink);
 }
-.drawer-handle {
+dialog.sheet::backdrop {
+  background: #14231a55;
+}
+.sheet-handle {
   width: 38px;
   height: 4px;
   border-radius: 99px;
   background: #d4d9d5;
   margin: 0 auto 18px;
 }
-.drawer-title {
+.sheet-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
-.drawer-title h2 {
+.sheet-header h2 {
   font-family: "Playfair Display", serif;
   font-size: 24px;
+  margin: 0;
 }
 .product-cats {
   display: flex;
@@ -738,17 +818,24 @@ h2 {
   color: var(--ink);
   font-weight: 700;
 }
+/*
+ * UX-04: the previous single 700px breakpoint applied a 248px sidebar and
+ * 96px of horizontal padding simultaneously, leaving ~356px of unusable
+ * content width right at 700px (and awkward table/product grids at 768px).
+ * Splitting it into a narrower 700-899px tier and the original 900px+ tier
+ * fixes both audited widths without changing the large-desktop layout.
+ */
 @media (min-width: 700px) {
   body {
-    padding-left: 248px;
+    padding-left: 208px;
   }
   .shell {
     max-width: 1440px;
     margin: 0;
-    padding: 34px 48px 48px;
+    padding: 34px 20px 48px;
   }
   .tables {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .page-head {
     margin-top: 34px;
@@ -756,32 +843,29 @@ h2 {
   .cash-card {
     max-width: 440px;
   }
-  .drawer {
+  dialog.sheet {
     max-width: 650px;
-    margin: 0 auto;
+    margin: auto;
+    inset: 0;
     border-radius: 24px;
     padding: 24px;
     max-height: 90vh;
   }
-  .modal-backdrop {
-    align-items: center;
-    padding: 20px;
-  }
   .products {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .stock-card {
     max-width: 860px;
   }
   .kpis {
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .bottom-nav {
     position: fixed;
     inset: 0 auto 0 0;
-    width: 248px;
+    width: 208px;
     height: 100vh;
-    padding: 34px 16px;
+    padding: 34px 12px;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
@@ -794,7 +878,7 @@ h2 {
   }
   .nav-label {
     display: block;
-    color: #97a09a;
+    color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 0.11em;
     font-size: 10px;
@@ -830,4 +914,112 @@ h2 {
   .page-head {
     max-width: 100%;
   }
+}
+@media (min-width: 900px) {
+  body {
+    padding-left: 248px;
+  }
+  .shell {
+    padding: 34px 48px 48px;
+  }
+  .tables {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .products {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .kpis {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .bottom-nav {
+    width: 248px;
+    padding: 34px 16px;
+  }
+}
+
+/* UX-01: shared loading/error/empty rendering, see components/ui/async-section.tsx */
+.async-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.async-state-error {
+  color: #9a382f;
+}
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid #dfebe2;
+  border-top-color: var(--forest);
+  animation: kalloud-spin 0.7s linear infinite;
+}
+@keyframes kalloud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Auth pages (SEC-03) */
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px 24px;
+  box-shadow: 0 20px 40px #17231d10;
+}
+.auth-card .brand {
+  justify-content: center;
+  margin-bottom: 6px;
+}
+.auth-title {
+  text-align: center;
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+.auth-subtitle {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 22px;
+}
+.auth-links {
+  margin-top: 16px;
+  text-align: center;
+  font-size: 13px;
+}
+.auth-links a {
+  color: var(--forest);
+  font-weight: 700;
+  text-decoration: none;
+}
+.auth-links a:hover,
+.auth-links a:focus-visible {
+  text-decoration: underline;
+}
+.auth-devbox {
+  margin-top: 18px;
+  padding: 12px 13px;
+  background: #f3f7f3;
+  border: 1px dashed #b6d5be;
+  border-radius: 12px;
+  font-size: 11px;
+  color: #2f6b43;
+  line-height: 1.5;
 }

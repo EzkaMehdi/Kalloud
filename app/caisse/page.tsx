@@ -1,66 +1,85 @@
 "use client";
+
 import { CalendarPlus, Plus, Table2 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { CashMovementModal } from "../../components/cash-movement-modal";
-import { CloseDayModal } from "../../components/close-day-modal";
-import { OrderDrawer } from "../../components/order-drawer";
-import { Shell } from "../../components/shell";
-const initial = [
-  { id: 1, name: "Table 1", status: "FREE" },
-  { id: 2, name: "Table 2", status: "FREE" },
-  { id: 3, name: "Table 3", status: "FREE" },
-  { id: 4, name: "Table 4", status: "FREE" },
-  { id: 5, name: "Table 5", status: "FREE" },
-  { id: 6, name: "Table 6", status: "FREE" },
-  { id: 7, name: "Table 7", status: "FREE" },
-  { id: 8, name: "Comptoir / Vente directe", status: "FREE" },
-];
+import { useState } from "react";
+import { CashMovementModal } from "@/components/cash-movement-modal";
+import { CloseDayModal } from "@/components/close-day-modal";
+import { OrderDrawer } from "@/components/order-drawer";
+import { AsyncSection } from "@/components/ui/async-section";
+import { Shell } from "@/components/shell";
+import { apiFetch } from "@/lib/client/api";
+import { useAsyncData } from "@/lib/client/use-async-data";
+
+interface DiningTable {
+  id: number;
+  name: string;
+  status: "FREE" | "OCCUPIED";
+}
+
+interface CashSummary {
+  balance: string;
+}
+
+interface DashboardSummary {
+  revenue: string;
+}
+
 export default function Caisse() {
-  const [tables, setTables] = useState(initial);
+  const tablesQuery = useAsyncData(() => apiFetch<DiningTable[]>("/api/tables"), []);
+  const cashQuery = useAsyncData(() => apiFetch<CashSummary>("/api/cash-summary"), []);
+  const revenueQuery = useAsyncData(
+    () => apiFetch<DashboardSummary>("/api/dashboard?period=day"),
+    [],
+  );
+
   const [selected, setSelected] = useState<{ id: number | null; name: string } | null>(null);
   const [notice, setNotice] = useState("");
   const [movementOpen, setMovementOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
-  const [cash, setCash] = useState(150);
-  const [revenue, setRevenue] = useState(0);
-  const [now, setNow] = useState(new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 30000);
-    fetch("http://localhost:3001/api/tables")
-      .then((r) => r.json())
-      .then(setTables)
-      .catch(() => {});
-    fetch("http://localhost:3001/api/cash-summary")
-      .then((r) => r.json())
-      .then((d) => setCash(Number(d.balance)))
-      .catch(() => {});
-    fetch("http://localhost:3001/api/dashboard")
-      .then((r) => r.json())
-      .then((d) => setRevenue(Number(d.revenue)))
-      .catch(() => {});
-    return () => clearInterval(id);
-  }, []);
+  const [now] = useState(() => new Date());
+
   function message(text: string) {
     setNotice(text);
     setTimeout(() => setNotice(""), 3500);
   }
+
   function done(total: number) {
-    if (selected) {
-      setTables((t) => t.map((x) => (x.id === selected.id ? { ...x, status: "FREE" } : x)));
-      setSelected(null);
-      setRevenue((c) => c + total);
-      message("Vente encaissée, stock et chiffre d’affaires mis à jour");
-    }
+    setSelected(null);
+    tablesQuery.refetch();
+    revenueQuery.refetch();
+    cashQuery.refetch();
+    message(`Vente encaissée (${total.toFixed(2)} €) : stock et tables mis à jour`);
   }
-  function movementSaved(amount: number, type: "IN" | "OUT") {
-    setCash((c) => c + (type === "IN" ? amount : -amount));
+
+  function movementSaved(_amount: number, _type: "IN" | "OUT") {
+    cashQuery.refetch();
     message("Mouvement enregistré dans le journal de caisse");
   }
-  function newDay(opening: number) {
-    setCash(opening);
-    setRevenue(0);
-    message("Nouvelle journée ouverte : le bilan précédent est clôturé");
+
+  function newService() {
+    cashQuery.refetch();
+    revenueQuery.refetch();
+    tablesQuery.refetch();
+    message("Service clôturé : un nouveau service est ouvert");
   }
+
+  async function openTable(tableEntry: DiningTable) {
+    setSelected({ id: tableEntry.id, name: tableEntry.name });
+    if (tableEntry.status === "OCCUPIED") return;
+    try {
+      await apiFetch(`/api/tables/${tableEntry.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "OCCUPIED" }),
+      });
+      tablesQuery.refetch();
+    } catch {
+      // UX-01: a failed status change must not be silently ignored (it was,
+      // pre-audit fix P0-05) — the drawer still opens (the cashier can keep
+      // working), but they are told the floor plan may be out of sync.
+      message("La table n'a pas pu être marquée occupée. Le plan de salle sera à vérifier.");
+    }
+  }
+
   return (
     <Shell>
       <div className="page-head">
@@ -84,67 +103,90 @@ export default function Caisse() {
           <Plus size={22} />
         </button>
       </div>
+
       {notice && (
-        <div className="status" style={{ marginBottom: 12 }}>
-          <span className="dot" />
+        <div className="status" style={{ marginBottom: 12 }} role="status" aria-live="polite">
+          <span className="dot" aria-hidden="true" />
           {notice}
         </div>
       )}
+
       <div className="cash-card">
         <div>
           <small>Espèces en caisse</small>
-          <strong>{cash.toFixed(2).replace(".", ",")} €</strong>
+          <strong>
+            {cashQuery.state.status === "success"
+              ? `${Number(cashQuery.state.data.balance).toFixed(2).replace(".", ",")} €`
+              : cashQuery.state.status === "error"
+                ? "—"
+                : "…"}
+          </strong>
         </div>
         <button onClick={() => setMovementOpen(true)}>Mouvement</button>
       </div>
+      {cashQuery.state.status === "error" && (
+        <p className="form-error" role="alert" style={{ marginTop: -18, marginBottom: 18 }}>
+          {cashQuery.state.message}
+        </p>
+      )}
+
       <div className="quick-kpi">
-        <span>Chiffre d’affaires de la journée</span>
-        <b>{revenue.toFixed(2).replace(".", ",")} €</b>
-        <small>Une journée se clôture manuellement</small>
+        <span>Chiffre d&apos;affaires du service</span>
+        <b>
+          {revenueQuery.state.status === "success"
+            ? `${Number(revenueQuery.state.data.revenue).toFixed(2).replace(".", ",")} €`
+            : revenueQuery.state.status === "error"
+              ? "—"
+              : "…"}
+        </b>
+        <small>Un service se clôture manuellement</small>
       </div>
+
       <button className="close-day-button" onClick={() => setCloseOpen(true)}>
-        <CalendarPlus size={18} />
+        <CalendarPlus size={18} aria-hidden="true" />
         <span>
-          <b>Nouvelle journée</b>
-          <small>Clôturer le service actuel et repartir sur un nouveau bilan</small>
+          <b>Clôturer le service</b>
+          <small>Compter la caisse, figer le bilan et repartir sur un nouveau service</small>
         </span>
       </button>
+
       <div className="section-title">
         <div>
           <h2>Plan de salle</h2>
           <p className="eyebrow">Touchez une table pour prendre la commande</p>
         </div>
         <span className="status">
-          <span className="dot" />
-          Journée ouverte
+          <span className="dot" aria-hidden="true" />
+          Service ouvert
         </span>
       </div>
-      <div className="tables">
-        {tables.map((t) => (
-          <button
-            onClick={() => {
-              setSelected({ id: t.id, name: t.name });
-              setTables((all) =>
-                all.map((x) => (x.id === t.id ? { ...x, status: "OCCUPIED" } : x)),
-              );
-              fetch(`http://localhost:3001/api/tables/${t.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: "OCCUPIED" }),
-              });
-            }}
-            key={t.name}
-            className={`table-card ${t.status === "OCCUPIED" ? "occupied" : ""}`}
-          >
-            <Table2 className="table-icon" size={25} />
-            <span className={`pill ${t.status === "FREE" ? "free" : "busy"}`}>
-              {t.status === "FREE" ? "LIBRE" : "EN COURS"}
-            </span>
-            <h3>{t.name}</h3>
-            <p>{t.status === "FREE" ? "Disponible" : "Ticket en cours"}</p>
-          </button>
-        ))}
-      </div>
+
+      <AsyncSection
+        state={tablesQuery.state}
+        onRetry={tablesQuery.refetch}
+        isEmpty={(data) => data.length === 0}
+        emptyMessage="Aucune table configurée pour cet établissement."
+      >
+        {(tables) => (
+          <div className="tables">
+            {tables.map((tableEntry) => (
+              <button
+                onClick={() => openTable(tableEntry)}
+                key={tableEntry.id}
+                className={`table-card ${tableEntry.status === "OCCUPIED" ? "occupied" : ""}`}
+              >
+                <Table2 className="table-icon" size={25} aria-hidden="true" />
+                <span className={`pill ${tableEntry.status === "FREE" ? "free" : "busy"}`}>
+                  {tableEntry.status === "FREE" ? "LIBRE" : "EN COURS"}
+                </span>
+                <h3>{tableEntry.name}</h3>
+                <p>{tableEntry.status === "FREE" ? "Disponible" : "Occupée"}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </AsyncSection>
+
       {selected && (
         <OrderDrawer
           table={selected.name}
@@ -152,11 +194,11 @@ export default function Caisse() {
           onClose={() => setSelected(null)}
           onComplete={done}
         />
-      )}{" "}
+      )}
       {movementOpen && (
         <CashMovementModal onClose={() => setMovementOpen(false)} onSaved={movementSaved} />
-      )}{" "}
-      {closeOpen && <CloseDayModal onClose={() => setCloseOpen(false)} onFinished={newDay} />}
+      )}
+      {closeOpen && <CloseDayModal onClose={() => setCloseOpen(false)} onFinished={newService} />}
     </Shell>
   );
 }

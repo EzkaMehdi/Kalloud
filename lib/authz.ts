@@ -9,6 +9,13 @@ export function isRole(value: unknown): value is Role {
   return typeof value === "string" && (ROLES as readonly string[]).includes(value);
 }
 
+/** UX-06: the one place role names are translated for display, so the UI never invents a second vocabulary. */
+export const ROLE_LABELS: Readonly<Record<Role, string>> = Object.freeze({
+  OWNER: "Propriétaire",
+  MANAGER: "Responsable",
+  CASHIER: "Caissier",
+});
+
 /**
  * Every sensitive action in the product, named independently of any single
  * endpoint so a route can require exactly the permission it needs. This is

@@ -1,6 +1,10 @@
 "use client";
-import { ArrowDownToLine, ArrowUpFromLine, X } from "lucide-react";
+
+import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
 import { FormEvent, useState } from "react";
+import { Dialog } from "@/components/ui/dialog";
+import { TextField } from "@/components/ui/text-field";
+import { ApiError, apiFetch } from "@/lib/client/api";
 
 export function CashMovementModal({
   onClose,
@@ -14,97 +18,94 @@ export function CashMovementModal({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
     const value = Number(amount);
     if (!value || value <= 0 || !reason.trim()) {
       setError("Indiquez un montant et un motif.");
       return;
     }
     setSaving(true);
+    setError("");
     try {
-      const res = await fetch("http://localhost:3001/api/cash-movements", {
+      await apiFetch("/api/cash-movements", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, amount: value, reason }),
+        body: JSON.stringify({ type, amount: value, reason: reason.trim() }),
       });
-      if (!res.ok) throw new Error();
       onSaved(value, type);
       onClose();
-    } catch {
-      setError("Impossible d’enregistrer le mouvement. Vérifiez que l’API est lancée.");
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError ? caught.message : "Impossible d'enregistrer le mouvement.",
+      );
     } finally {
       setSaving(false);
     }
   }
+
   return (
-    <div className="modal-backdrop">
-      <form className="drawer movement-drawer" onSubmit={submit}>
-        <div className="drawer-handle" />
-        <div className="drawer-title">
-          <div>
-            <span className="eyebrow">Journal de caisse</span>
-            <h2>Nouveau mouvement</h2>
-          </div>
-          <button type="button" className="icon-button" onClick={onClose}>
-            <X size={19} />
-          </button>
-        </div>
+    <Dialog title="Nouveau mouvement" eyebrow="Journal de caisse" onClose={onClose}>
+      <form onSubmit={submit}>
         <p className="modal-help">
-          Enregistrez chaque entrée ou sortie d’espèces qui n’est pas une vente.
+          Enregistrez chaque entrée ou sortie d&apos;espèces qui n&apos;est pas une vente.
         </p>
-        <div className="movement-types">
+        <div className="movement-types" role="radiogroup" aria-label="Type de mouvement">
           <button
             type="button"
+            role="radio"
+            aria-checked={type === "IN"}
             onClick={() => setType("IN")}
             className={type === "IN" ? "selected in" : ""}
           >
-            <ArrowDownToLine size={19} />
+            <ArrowDownToLine size={19} aria-hidden="true" />
             <span>Entrée</span>
-            <small>Ajout d’espèces</small>
+            <small>Ajout d&apos;espèces</small>
           </button>
           <button
             type="button"
+            role="radio"
+            aria-checked={type === "OUT"}
             onClick={() => setType("OUT")}
             className={type === "OUT" ? "selected out" : ""}
           >
-            <ArrowUpFromLine size={19} />
+            <ArrowUpFromLine size={19} aria-hidden="true" />
             <span>Sortie</span>
             <small>Dépense ou retrait</small>
           </button>
         </div>
-        <label className="field-label">
-          Montant (€)
-          <input
-            className="input"
-            inputMode="decimal"
-            type="number"
-            min="0.01"
-            step="0.01"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Ex. 20,00"
-            autoFocus
-          />
-        </label>
-        <label className="field-label">
-          Motif
-          <input
-            className="input"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder={type === "IN" ? "Ex. Ajout de monnaie" : "Ex. Achat urgent"}
-          />
-        </label>
-        {error && <p className="form-error">{error}</p>}
+        <TextField
+          label="Montant (€)"
+          inputMode="decimal"
+          type="number"
+          min="0.01"
+          step="0.01"
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+          placeholder="Ex. 20,00"
+          autoFocus
+          required
+        />
+        <TextField
+          label="Motif"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder={type === "IN" ? "Ex. Ajout de monnaie" : "Ex. Achat urgent"}
+          required
+        />
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <button
           className="primary-button"
           style={{ width: "100%", marginTop: 20 }}
           disabled={saving}
         >
-          {saving ? "Enregistrement…" : `Valider l’${type === "IN" ? "entrée" : "sortie"}`}
+          {saving ? "Enregistrement…" : `Valider l'${type === "IN" ? "entrée" : "sortie"}`}
         </button>
       </form>
-    </div>
+    </Dialog>
   );
 }

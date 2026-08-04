@@ -206,35 +206,37 @@ Toutes les tâches de cette phase sont `P0`. Traiter `DEC-01` en premier, puis p
 
 ## 6. Phase 1 — Fondations reproductibles
 
-- [ ] **`FND-01` — Nettoyer le suivi Git**
+- [x] **`FND-01` — Nettoyer le suivi Git**
   - Priorité : `P0`
   - Dépend de : aucune
   - Livrable : `.gitignore` complet ; retrait de `.next`, caches, fichiers de build et `.env` du suivi.
   - Acceptation : seul `.env.example` est suivi ; aucun secret réel dans l’historique courant ; `git status` reste propre après build.
 
-- [ ] **`FND-02` — Mettre à niveau les dépendances critiques**
+- [x] **`FND-02` — Mettre à niveau les dépendances critiques**
   - Priorité : `P0`
   - Dépend de : aucune
   - Livrable : version maintenue de Next.js et dépendances compatibles.
   - Acceptation : version cible et support documentés ; build et typecheck réussis ; aucun avis critique ou élevé non documenté ; gabarit `allowBuilds` de `pnpm-workspace.yaml` résolu.
+  - Réalisé : Next.js 16.3.0, React 19.2.8, TypeScript 5.9.3 ; `pnpm audit` : 0 avis.
 
-- [ ] **`FND-03` — Configurer lint et formatage non interactifs**
+- [x] **`FND-03` — Configurer lint et formatage non interactifs**
   - Priorité : `P0`
   - Dépend de : `FND-02`
   - Livrable : ESLint, formatage et scripts `lint`, `format:check`.
   - Acceptation : commandes sans question interactive et exécutables en CI.
 
-- [ ] **`FND-04` — Installer l’infrastructure de tests**
+- [x] **`FND-04` — Installer l’infrastructure de tests**
   - Priorité : `P0`
   - Dépend de : `FND-02`
   - Livrable : tests unitaires, intégration PostgreSQL et parcours navigateur.
   - Acceptation : un test exemple de chaque niveau s’exécute localement et en CI ; les tests peuvent réinitialiser leur base.
 
-- [ ] **`FND-05` — Installer un système de migrations canonique**
+- [x] **`FND-05` — Installer un système de migrations canonique**
   - Priorité : `P0`
   - Dépend de : `DEC-02`, `FND-02`
   - Livrable : migrations ordonnées remplaçant la séparation fragile entre `schema.sql`, `002-business-days.sql` et les chemins d’initialisation concurrents.
   - Acceptation : une base vide et une base existante convergent vers le même schéma ; les migrations sont idempotentes au niveau attendu.
+  - Réalisé : `migrations/000{1..4}_*.sql` + `scripts/migrate.mjs` (`up`/`status`) ; inclut le schéma `SEC-01`, `SEC-02` et `CFG-00`.
 
 - [ ] **`FND-06` — Créer un bootstrap de base cohérent**
   - Priorité : `P0`
@@ -303,23 +305,26 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ### Sécurité et multi-tenant
 
-- [ ] **`SEC-01` — Ajouter organisations, établissements, utilisateurs et memberships**
+- [x] **`SEC-01` — Ajouter organisations, établissements, utilisateurs et memberships**
   - Priorité : `P0`
   - Dépend de : `FND-05`, `DEC-07`
   - Livrable : tables et contraintes d’identité/périmètre.
   - Acceptation : un utilisateur peut appartenir à une organisation avec un rôle et un établissement actif.
+  - Réalisé : `migrations/0001_identity_and_tenancy.sql` (`organizations`, `locations`, `users`, `memberships` + tables de session/auth pour `SEC-03`).
 
-- [ ] **`SEC-02` — Ajouter `location_id` aux données métier**
+- [x] **`SEC-02` — Ajouter `location_id` aux données métier**
   - Priorité : `P0`
   - Dépend de : `SEC-01`, `FND-06`
   - Livrable : migration de catégories, produits, tables, journées, commandes et mouvements.
   - Acceptation : aucune ligne métier sans établissement ; index et contraintes adaptés.
+  - Réalisé : `migrations/0003_business_core.sql` — `location_id NOT NULL` + FK composites vers `locations` sur `categories`, `products`, `dining_tables`, `business_days`, `orders`, `cash_movements`. Le cycle de vie canonique des commandes et le ledger de paiements/stock restent `ORD-01`/`SALE-02`/`STK-01` (phase 3), volontairement non anticipés ici.
 
-- [ ] **`CFG-00` — Stocker les paramètres métier de l’établissement**
+- [x] **`CFG-00` — Stocker les paramètres métier de l’établissement**
   - Priorité : `P0`
   - Dépend de : `SEC-01`, `SEC-02`, `DEC-04`, `DEC-05`
   - Livrable : schéma pour fuseau horaire, devise, classes fiscales assignables aux catégories/produits, règle de repli et seuil d’écart de caisse.
   - Acceptation : valeurs obligatoires, validées et disponibles dans le contexte serveur avant tout calcul financier.
+  - Réalisé : `migrations/0002_location_settings.sql` (`location_settings`, `tax_classes`) ; exposition dans le contexte serveur via `lib/context` (voir `SEC-04`).
 
 - [ ] **`SEC-03` — Ajouter l’authentification**
   - Priorité : `P0`

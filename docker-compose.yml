@@ -11,8 +11,11 @@ services:
       - "5433:5432"
     volumes:
       - kalloud_postgres_data:/var/lib/postgresql/data
-      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+      # Only a one-off "create the test database" script lives here now
+      # (FND-05): the application schema itself is owned exclusively by
+      # migrations/ and applied by scripts/migrate.mjs, never by Postgres'
+      # own docker-entrypoint-initdb.d mechanism.
+      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U kalloud -d kalloud"]
       interval: 5s

@@ -7,9 +7,8 @@
     "node": ">=20.9.0"
   },
   "scripts": {
-    "predev": "node scripts/ensure-db.mjs && node scripts/migrate.mjs up && node scripts/seed.mjs",
+    "predev": "node --env-file=.env scripts/ensure-db.mjs && node --env-file=.env scripts/migrate.mjs up && node --env-file=.env scripts/seed.mjs",
     "dev": "next dev",
-    "prebuild": "node scripts/migrate.mjs status",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -19,16 +18,16 @@
     "typecheck": "tsc --noEmit",
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
-    "db:migrate": "node scripts/migrate.mjs up",
-    "db:migrate:status": "node scripts/migrate.mjs status",
-    "db:seed": "node scripts/seed.mjs",
-    "db:reset": "node scripts/reset-db.mjs",
+    "db:migrate": "node --env-file=.env scripts/migrate.mjs up",
+    "db:migrate:status": "node --env-file=.env scripts/migrate.mjs status",
+    "db:seed": "node --env-file=.env scripts/seed.mjs",
+    "db:reset": "node --env-file=.env scripts/reset-db.mjs",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
-    "setup": "node scripts/ensure-db.mjs && node scripts/migrate.mjs up && node scripts/seed.mjs"
+    "setup": "node --env-file=.env scripts/ensure-db.mjs && node --env-file=.env scripts/migrate.mjs up && node --env-file=.env scripts/seed.mjs"
   },
   "dependencies": {
     "next": "16.3.0",

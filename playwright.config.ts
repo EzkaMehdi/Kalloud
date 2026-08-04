@@ -1,5 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 
+// See vitest.config.ts: makes DATABASE_URL/DATABASE_URL_TEST available to
+// test code that seeds fixtures directly (the spawned `next dev` process
+// below loads .env itself regardless, via Next.js' own dotenv support).
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env file yet; tests that need direct DB access will fail explicitly.
+}
+
 const PORT = 3100;
 const baseURL = `http://127.0.0.1:${PORT}`;
 

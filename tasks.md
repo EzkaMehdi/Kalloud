@@ -125,74 +125,84 @@ erDiagram
 
 Toutes les tâches de cette phase sont `P0`. Traiter `DEC-01` en premier, puis paralléliser les autres selon leurs dépendances.
 
-- [ ] **`DEC-01` — Figer le périmètre du MVP**
+- [x] **`DEC-01` — Figer le périmètre du MVP**
   - Priorité : `P0`
   - Dépend de : aucune
   - Livrable : une liste « inclus / exclu » validant un établissement par organisation, les trois rôles, le positionnement lounge/café/petite restauration et les parcours obligatoires.
   - Acceptation : chaque fonction du présent fichier est marquée MVP ou post-MVP ; cible commerciale et critères de succès du pilote sont explicites.
+  - Décision : [`docs/decisions/DEC-01-perimetre-mvp.md`](./docs/decisions/DEC-01-perimetre-mvp.md).
 
-- [ ] **`DEC-02` — Choisir l’architecture d’exécution**
+- [x] **`DEC-02` — Choisir l’architecture d’exécution**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : décision entre Route Handlers Next.js et API Express autonome.
   - Recommandation : intégrer l’API à Next.js pour le MVP afin d’obtenir des appels same-origin et un seul déploiement.
   - Acceptation : cible locale, CI et production documentées ; stratégie d’URL, secrets et migrations définie.
+  - Décision : [`docs/decisions/DEC-02-architecture-execution.md`](./docs/decisions/DEC-02-architecture-execution.md) — Next.js Route Handlers retenu.
 
-- [ ] **`DEC-03` — Définir le cycle de vie d’une commande**
+- [x] **`DEC-03` — Définir le cycle de vie d’une commande**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : états et transitions `OPEN → PAID`, `OPEN → CANCELLED`, `PAID → REFUNDED`.
   - Acceptation : « commande », « ticket » et « vente » ont chacun une définition ; une seule notion de vente directe est retenue.
+  - Décision : [`docs/decisions/DEC-03-cycle-vie-commande.md`](./docs/decisions/DEC-03-cycle-vie-commande.md).
 
-- [ ] **`DEC-04` — Définir la journée de caisse**
+- [x] **`DEC-04` — Définir la journée de caisse**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : règle précisant s’il s’agit d’un service ou d’un jour calendaire, avec fuseau horaire, passage de minuit et comptage aveugle ou non.
   - Acceptation : ouverture, ordre d’affichage compté/attendu, clôture, réouverture éventuelle et traitement des tickets ouverts sont définis.
+  - Décision : [`docs/decisions/DEC-04-journee-caisse.md`](./docs/decisions/DEC-04-journee-caisse.md) — session de caisse non aveugle, sans réouverture.
 
-- [ ] **`DEC-05` — Définir les règles monétaires**
+- [x] **`DEC-05` — Définir les règles monétaires**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : devise, TVA, TTC/HT, arrondis, paiements autorisés, inclusion du paiement mixte au MVP, remise et remboursement.
   - Acceptation : taux par classe fiscale et règle de repli sont définis ; formules et cas limites sont illustrés ; `somme des paiements = total` est obligatoire.
+  - Décision : [`docs/decisions/DEC-05-regles-monetaires.md`](./docs/decisions/DEC-05-regles-monetaires.md).
 
-- [ ] **`DEC-06` — Définir le stock du MVP**
+- [x] **`DEC-06` — Définir le stock du MVP**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : décision produit fini versus ingrédients/recettes.
   - Recommandation : produits finis pour le MVP ; recettes et ingrédients après validation du pilote.
   - Acceptation : unités, types de mouvements, règles de stock négatif, méthode d’inventaire et choix solde dérivé versus solde matérialisé sont définis.
+  - Décision : [`docs/decisions/DEC-06-stock-mvp.md`](./docs/decisions/DEC-06-stock-mvp.md) — produits finis, solde matérialisé + ledger.
 
-- [ ] **`DEC-07` — Définir les rôles et permissions**
+- [x] **`DEC-07` — Définir les rôles et permissions**
   - Priorité : `P0`
   - Dépend de : `DEC-01`, `DEC-05`
   - Livrable : matrice `OWNER`, `MANAGER`, `CASHIER`.
   - Acceptation : chaque rôle précise ses droits sur prix, stock, caisse, remboursement, clôture, utilisateurs et pilotage.
+  - Décision : [`docs/decisions/DEC-07-roles-permissions.md`](./docs/decisions/DEC-07-roles-permissions.md).
 
-- [ ] **`DEC-08` — Décider le niveau de fonctionnement hors ligne et multi-appareil**
+- [x] **`DEC-08` — Décider le niveau de fonctionnement hors ligne et multi-appareil**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : décision explicite sur les coupures réseau et le nombre d’appareils simultanés.
   - Recommandation : pas d’encaissement hors ligne pour le MVP ; erreurs explicites et reprise sûre.
   - Acceptation : comportement attendu lors d’une perte réseau avant, pendant et après un encaissement.
+  - Décision : [`docs/decisions/DEC-08-offline-multi-appareil.md`](./docs/decisions/DEC-08-offline-multi-appareil.md).
 
-- [ ] **`DEC-09` — Définir les KPI et exports du MVP**
+- [x] **`DEC-09` — Définir les KPI et exports du MVP**
   - Priorité : `P0`
   - Dépend de : `DEC-04`, `DEC-05`, `DEC-06`
   - Livrable : dictionnaire des KPI, sources, formules, périodes, comparaisons et fuseau horaire.
   - Acceptation : CA net, commandes, panier moyen, espèces attendues, écart de caisse et alertes de stock sont définis ; format CSV validé.
+  - Décision : [`docs/decisions/DEC-09-kpi-exports.md`](./docs/decisions/DEC-09-kpi-exports.md).
 
-- [ ] **`DEC-10` — Définir conservation, sauvegarde et suppression**
+- [x] **`DEC-10` — Définir conservation, sauvegarde et suppression**
   - Priorité : `P0`
   - Dépend de : `DEC-01`
   - Livrable : durées de conservation, politique de sauvegarde, restauration, suppression de compte, RPO et RTO cibles.
   - Acceptation : exigences minimales de confidentialité et responsabilités opérationnelles écrites.
+  - Décision : [`docs/decisions/DEC-10-conservation-sauvegarde.md`](./docs/decisions/DEC-10-conservation-sauvegarde.md).
 
 ### `GATE-0` — Décisions
 
-- [ ] Toutes les décisions `DEC-*` sont validées.
-- [ ] Le périmètre MVP ne contient aucun élément post-MVP.
-- [ ] Les termes métier utilisés par le code et l’interface sont fixés.
+- [x] Toutes les décisions `DEC-*` sont validées.
+- [x] Le périmètre MVP ne contient aucun élément post-MVP.
+- [x] Les termes métier utilisés par le code et l’interface sont fixés.
 
 ## 6. Phase 1 — Fondations reproductibles
 

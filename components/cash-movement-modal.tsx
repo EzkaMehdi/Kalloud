@@ -2,8 +2,109 @@
 import { ArrowDownToLine, ArrowUpFromLine, X } from "lucide-react";
 import { FormEvent, useState } from "react";
 
-export function CashMovementModal({onClose,onSaved}:{onClose:()=>void;onSaved:(amount:number,type:"IN"|"OUT")=>void}) {
-  const [type,setType]=useState<"IN"|"OUT">("IN"); const [amount,setAmount]=useState(""); const [reason,setReason]=useState(""); const [saving,setSaving]=useState(false); const [error,setError]=useState("");
-  async function submit(e:FormEvent){e.preventDefault(); const value=Number(amount); if(!value||value<=0||!reason.trim()){setError("Indiquez un montant et un motif.");return} setSaving(true);try{const res=await fetch("http://localhost:3001/api/cash-movements",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type,amount:value,reason})});if(!res.ok)throw new Error();onSaved(value,type);onClose()}catch{setError("Impossible d’enregistrer le mouvement. Vérifiez que l’API est lancée.")}finally{setSaving(false)}}
-  return <div className="modal-backdrop"><form className="drawer movement-drawer" onSubmit={submit}><div className="drawer-handle"/><div className="drawer-title"><div><span className="eyebrow">Journal de caisse</span><h2>Nouveau mouvement</h2></div><button type="button" className="icon-button" onClick={onClose}><X size={19}/></button></div><p className="modal-help">Enregistrez chaque entrée ou sortie d’espèces qui n’est pas une vente.</p><div className="movement-types"><button type="button" onClick={()=>setType("IN")} className={type==="IN"?"selected in":""}><ArrowDownToLine size={19}/><span>Entrée</span><small>Ajout d’espèces</small></button><button type="button" onClick={()=>setType("OUT")} className={type==="OUT"?"selected out":""}><ArrowUpFromLine size={19}/><span>Sortie</span><small>Dépense ou retrait</small></button></div><label className="field-label">Montant (€)<input className="input" inputMode="decimal" type="number" min="0.01" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="Ex. 20,00" autoFocus/></label><label className="field-label">Motif<input className="input" value={reason} onChange={e=>setReason(e.target.value)} placeholder={type==="IN"?"Ex. Ajout de monnaie":"Ex. Achat urgent"}/></label>{error&&<p className="form-error">{error}</p>}<button className="primary-button" style={{width:"100%",marginTop:20}} disabled={saving}>{saving?"Enregistrement…":`Valider l’${type==="IN"?"entrée":"sortie"}`}</button></form></div>
+export function CashMovementModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: (amount: number, type: "IN" | "OUT") => void;
+}) {
+  const [type, setType] = useState<"IN" | "OUT">("IN");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const value = Number(amount);
+    if (!value || value <= 0 || !reason.trim()) {
+      setError("Indiquez un montant et un motif.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch("http://localhost:3001/api/cash-movements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, amount: value, reason }),
+      });
+      if (!res.ok) throw new Error();
+      onSaved(value, type);
+      onClose();
+    } catch {
+      setError("Impossible d’enregistrer le mouvement. Vérifiez que l’API est lancée.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop">
+      <form className="drawer movement-drawer" onSubmit={submit}>
+        <div className="drawer-handle" />
+        <div className="drawer-title">
+          <div>
+            <span className="eyebrow">Journal de caisse</span>
+            <h2>Nouveau mouvement</h2>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </div>
+        <p className="modal-help">
+          Enregistrez chaque entrée ou sortie d’espèces qui n’est pas une vente.
+        </p>
+        <div className="movement-types">
+          <button
+            type="button"
+            onClick={() => setType("IN")}
+            className={type === "IN" ? "selected in" : ""}
+          >
+            <ArrowDownToLine size={19} />
+            <span>Entrée</span>
+            <small>Ajout d’espèces</small>
+          </button>
+          <button
+            type="button"
+            onClick={() => setType("OUT")}
+            className={type === "OUT" ? "selected out" : ""}
+          >
+            <ArrowUpFromLine size={19} />
+            <span>Sortie</span>
+            <small>Dépense ou retrait</small>
+          </button>
+        </div>
+        <label className="field-label">
+          Montant (€)
+          <input
+            className="input"
+            inputMode="decimal"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder="Ex. 20,00"
+            autoFocus
+          />
+        </label>
+        <label className="field-label">
+          Motif
+          <input
+            className="input"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={type === "IN" ? "Ex. Ajout de monnaie" : "Ex. Achat urgent"}
+          />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <button
+          className="primary-button"
+          style={{ width: "100%", marginTop: 20 }}
+          disabled={saving}
+        >
+          {saving ? "Enregistrement…" : `Valider l’${type === "IN" ? "entrée" : "sortie"}`}
+        </button>
+      </form>
+    </div>
+  );
 }

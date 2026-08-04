@@ -2,5 +2,122 @@
 import { PackagePlus, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Shell } from "../../components/shell";
-const data=[{id:1,name:"Chicha Signature",cat:"Chichas",price:25,stock:12,limit:5},{id:2,name:"Chicha Classique",cat:"Chichas",price:20,stock:4,limit:5},{id:3,name:"Thé à la menthe",cat:"Boissons",price:4,stock:18,limit:8},{id:4,name:"Mojito passion",cat:"Boissons",price:8,stock:0,limit:4},{id:5,name:"Café latte",cat:"Boissons",price:5,stock:9,limit:5},{id:6,name:"Brunch Kalloud",cat:"Plats",price:19,stock:3,limit:3},{id:7,name:"Tiramisu maison",cat:"Desserts",price:7,stock:7,limit:4}];
-export default function Stock(){const [products,setProducts]=useState(data);const [filter,setFilter]=useState("");useEffect(()=>{fetch("http://localhost:3001/api/products").then(r=>r.json()).then(rows=>setProducts(rows.map((p:{id:number;name:string;category:string;price:string;stock_quantity:number;alert_threshold:number})=>({id:p.id,name:p.name,cat:p.category,price:Number(p.price),stock:p.stock_quantity,limit:p.alert_threshold})))).catch(()=>{})},[]);function charge(i:number){const amount=Number(prompt(`Quantité à ajouter pour ${products[i].name}`,"1"));if(amount>0){const product=products[i];const stock=product.stock+amount;fetch(`http://localhost:3001/api/products/${product.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({stockQuantity:stock})}).then(r=>{if(!r.ok)throw new Error();setProducts(p=>p.map((x,n)=>n===i?{...x,stock}:x))}).catch(()=>alert("Impossible de mettre à jour le stock."))}}return <Shell><div className="page-head"><div><p className="eyebrow">Inventaire en temps réel</p><h1>Les stocks</h1></div><button className="soft-button" onClick={()=>alert("Sélectionnez un produit pour le recharger.")}><PackagePlus size={18}/>Recharger</button></div><div className="section-title"><div><h2>Produits</h2><p className="eyebrow">{products.filter(p=>p.stock<=p.limit).length} alertes à surveiller</p></div></div><div style={{position:"relative",marginBottom:12}}><Search size={18} style={{position:"absolute",left:14,top:15,color:"#718078"}}/><input className="input" style={{paddingLeft:43}} value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Rechercher un produit"/></div><div className="stock-card">{products.filter(p=>p.name.toLowerCase().includes(filter.toLowerCase())).map((p,i)=>{const state=p.stock===0?"empty":p.stock<=p.limit?"low":"ok";const label=p.stock===0?"Rupture":p.stock<=p.limit?"À recharger":"En stock";return <div className="stock-row" key={p.name}><div><span className="stock-name">{p.name}</span><span className="stock-meta">{p.cat} · {p.price.toFixed(2)} € · seuil {p.limit}</span></div><div className="stock-value"><b>{p.stock} unités</b><button onClick={()=>charge(products.indexOf(p))} className={`stock-alert ${state}`}>{label} · +</button></div></div>})}</div></Shell>}
+const data = [
+  { id: 1, name: "Chicha Signature", cat: "Chichas", price: 25, stock: 12, limit: 5 },
+  { id: 2, name: "Chicha Classique", cat: "Chichas", price: 20, stock: 4, limit: 5 },
+  { id: 3, name: "Thé à la menthe", cat: "Boissons", price: 4, stock: 18, limit: 8 },
+  { id: 4, name: "Mojito passion", cat: "Boissons", price: 8, stock: 0, limit: 4 },
+  { id: 5, name: "Café latte", cat: "Boissons", price: 5, stock: 9, limit: 5 },
+  { id: 6, name: "Brunch Kalloud", cat: "Plats", price: 19, stock: 3, limit: 3 },
+  { id: 7, name: "Tiramisu maison", cat: "Desserts", price: 7, stock: 7, limit: 4 },
+];
+export default function Stock() {
+  const [products, setProducts] = useState(data);
+  const [filter, setFilter] = useState("");
+  useEffect(() => {
+    fetch("http://localhost:3001/api/products")
+      .then((r) => r.json())
+      .then((rows) =>
+        setProducts(
+          rows.map(
+            (p: {
+              id: number;
+              name: string;
+              category: string;
+              price: string;
+              stock_quantity: number;
+              alert_threshold: number;
+            }) => ({
+              id: p.id,
+              name: p.name,
+              cat: p.category,
+              price: Number(p.price),
+              stock: p.stock_quantity,
+              limit: p.alert_threshold,
+            }),
+          ),
+        ),
+      )
+      .catch(() => {});
+  }, []);
+  function charge(i: number) {
+    const amount = Number(prompt(`Quantité à ajouter pour ${products[i].name}`, "1"));
+    if (amount > 0) {
+      const product = products[i];
+      const stock = product.stock + amount;
+      fetch(`http://localhost:3001/api/products/${product.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stockQuantity: stock }),
+      })
+        .then((r) => {
+          if (!r.ok) throw new Error();
+          setProducts((p) => p.map((x, n) => (n === i ? { ...x, stock } : x)));
+        })
+        .catch(() => alert("Impossible de mettre à jour le stock."));
+    }
+  }
+  return (
+    <Shell>
+      <div className="page-head">
+        <div>
+          <p className="eyebrow">Inventaire en temps réel</p>
+          <h1>Les stocks</h1>
+        </div>
+        <button
+          className="soft-button"
+          onClick={() => alert("Sélectionnez un produit pour le recharger.")}
+        >
+          <PackagePlus size={18} />
+          Recharger
+        </button>
+      </div>
+      <div className="section-title">
+        <div>
+          <h2>Produits</h2>
+          <p className="eyebrow">
+            {products.filter((p) => p.stock <= p.limit).length} alertes à surveiller
+          </p>
+        </div>
+      </div>
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={18} style={{ position: "absolute", left: 14, top: 15, color: "#718078" }} />
+        <input
+          className="input"
+          style={{ paddingLeft: 43 }}
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Rechercher un produit"
+        />
+      </div>
+      <div className="stock-card">
+        {products
+          .filter((p) => p.name.toLowerCase().includes(filter.toLowerCase()))
+          .map((p, i) => {
+            const state = p.stock === 0 ? "empty" : p.stock <= p.limit ? "low" : "ok";
+            const label =
+              p.stock === 0 ? "Rupture" : p.stock <= p.limit ? "À recharger" : "En stock";
+            return (
+              <div className="stock-row" key={p.name}>
+                <div>
+                  <span className="stock-name">{p.name}</span>
+                  <span className="stock-meta">
+                    {p.cat} · {p.price.toFixed(2)} € · seuil {p.limit}
+                  </span>
+                </div>
+                <div className="stock-value">
+                  <b>{p.stock} unités</b>
+                  <button
+                    onClick={() => charge(products.indexOf(p))}
+                    className={`stock-alert ${state}`}
+                  >
+                    {label} · +
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+      </div>
+    </Shell>
+  );
+}

@@ -2,14 +2,156 @@
 import { Minus, Plus, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
-const products=[{id:1,name:"Chicha Signature",price:25,cat:"Chichas"},{id:2,name:"Chicha Classique",price:20,cat:"Chichas"},{id:3,name:"Thé à la menthe",price:4,cat:"Boissons"},{id:4,name:"Mojito passion",price:8,cat:"Boissons"},{id:7,name:"Café latte",price:5,cat:"Boissons"},{id:5,name:"Brunch Kalloud",price:19,cat:"Plats"},{id:6,name:"Tiramisu maison",price:7,cat:"Desserts"}];
-const cats=["Tout","Chichas","Boissons","Plats","Desserts"];
-type Item={id:number;name:string;price:number;quantity:number};
-export function OrderDrawer({table,tableId,onClose,onComplete}:{table:string;tableId:number|null;onClose:()=>void;onComplete:(total:number)=>void}){
- const [category,setCategory]=useState("Tout"); const [items,setItems]=useState<Item[]>([]); const [payment,setPayment]=useState("CB"); const [saving,setSaving]=useState(false);const [error,setError]=useState("");
- const filtered=products.filter(p=>category==="Tout"||p.cat===category); const total=useMemo(()=>items.reduce((s,i)=>s+i.price*i.quantity,0),[items]);
- function add(p:{id:number;name:string;price:number}){setItems(old=>{const exists=old.find(i=>i.id===p.id);return exists?old.map(i=>i.id===p.id?{...i,quantity:i.quantity+1}:i):[...old,{...p,quantity:1}]})}
- function delta(name:string,n:number){setItems(old=>old.flatMap(i=>i.name!==name?[i]:i.quantity+n>0?[{...i,quantity:i.quantity+n}]:[]))}
- async function checkout(){setSaving(true);setError("");try{const method=payment==="CB"?"CARD":payment==="Espèces"?"CASH":"MIXED";const response=await fetch("http://localhost:3001/api/checkout",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({tableId,items:items.map(i=>({productId:i.id,quantity:i.quantity})),paymentMethod:method,cashAmount:method==="CASH"?total:0,cardAmount:method==="CARD"?total:0})});const data=await response.json();if(!response.ok)throw new Error(data.error||"Erreur d’encaissement");onComplete(total)}catch(e){setError(e instanceof Error?e.message:"Erreur d’encaissement")}finally{setSaving(false)}}
- return <div className="modal-backdrop"><div className="drawer"><div className="drawer-handle"/><div className="drawer-title"><div><span className="eyebrow">Ticket en cours</span><h2>{table}</h2></div><button className="icon-button" onClick={onClose}><X size={19}/></button></div><div className="product-cats">{cats.map(c=><button key={c} onClick={()=>setCategory(c)} className={`cat ${category===c?"active":""}`}>{c}</button>)}</div><div className="products">{filtered.map(p=><button onClick={()=>add(p)} className="product" key={p.name}><b>{p.name}</b><span>{p.price.toFixed(2)} €</span></button>)}</div><div className="ticket"><h2>Votre commande</h2>{items.length===0?<p className="stock-meta">Touchez un article pour l’ajouter au ticket.</p>:items.map(i=><div className="ticket-line" key={i.name}><div><b>{i.name}</b><div className="quantity"><button onClick={()=>delta(i.name,-1)}><Minus size={14}/></button>{i.quantity}<button onClick={()=>delta(i.name,1)}><Plus size={14}/></button></div></div><b>{(i.price*i.quantity).toFixed(2)} €</b></div>)}<div className="ticket-total"><span>Total</span><span>{total.toFixed(2)} €</span></div></div><div className="checkout">{["CB","Espèces","Mixte"].map(p=><button key={p} className={`pay-option ${payment===p?"active":""}`} onClick={()=>setPayment(p)}>{p}</button>)}</div>{error&&<p className="form-error">{error}</p>}<button disabled={!items.length||saving} onClick={checkout} className="primary-button" style={{width:"100%",marginTop:12,opacity:items.length?1:.45}}>{saving?"Encaissement…":`Encaisser · ${total.toFixed(2)} €`}</button></div></div>
+const products = [
+  { id: 1, name: "Chicha Signature", price: 25, cat: "Chichas" },
+  { id: 2, name: "Chicha Classique", price: 20, cat: "Chichas" },
+  { id: 3, name: "Thé à la menthe", price: 4, cat: "Boissons" },
+  { id: 4, name: "Mojito passion", price: 8, cat: "Boissons" },
+  { id: 7, name: "Café latte", price: 5, cat: "Boissons" },
+  { id: 5, name: "Brunch Kalloud", price: 19, cat: "Plats" },
+  { id: 6, name: "Tiramisu maison", price: 7, cat: "Desserts" },
+];
+const cats = ["Tout", "Chichas", "Boissons", "Plats", "Desserts"];
+type Item = { id: number; name: string; price: number; quantity: number };
+export function OrderDrawer({
+  table,
+  tableId,
+  onClose,
+  onComplete,
+}: {
+  table: string;
+  tableId: number | null;
+  onClose: () => void;
+  onComplete: (total: number) => void;
+}) {
+  const [category, setCategory] = useState("Tout");
+  const [items, setItems] = useState<Item[]>([]);
+  const [payment, setPayment] = useState("CB");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const filtered = products.filter((p) => category === "Tout" || p.cat === category);
+  const total = useMemo(() => items.reduce((s, i) => s + i.price * i.quantity, 0), [items]);
+  function add(p: { id: number; name: string; price: number }) {
+    setItems((old) => {
+      const exists = old.find((i) => i.id === p.id);
+      return exists
+        ? old.map((i) => (i.id === p.id ? { ...i, quantity: i.quantity + 1 } : i))
+        : [...old, { ...p, quantity: 1 }];
+    });
+  }
+  function delta(name: string, n: number) {
+    setItems((old) =>
+      old.flatMap((i) =>
+        i.name !== name ? [i] : i.quantity + n > 0 ? [{ ...i, quantity: i.quantity + n }] : [],
+      ),
+    );
+  }
+  async function checkout() {
+    setSaving(true);
+    setError("");
+    try {
+      const method = payment === "CB" ? "CARD" : payment === "Espèces" ? "CASH" : "MIXED";
+      const response = await fetch("http://localhost:3001/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tableId,
+          items: items.map((i) => ({ productId: i.id, quantity: i.quantity })),
+          paymentMethod: method,
+          cashAmount: method === "CASH" ? total : 0,
+          cardAmount: method === "CARD" ? total : 0,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Erreur d’encaissement");
+      onComplete(total);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur d’encaissement");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop">
+      <div className="drawer">
+        <div className="drawer-handle" />
+        <div className="drawer-title">
+          <div>
+            <span className="eyebrow">Ticket en cours</span>
+            <h2>{table}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </div>
+        <div className="product-cats">
+          {cats.map((c) => (
+            <button
+              key={c}
+              onClick={() => setCategory(c)}
+              className={`cat ${category === c ? "active" : ""}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        <div className="products">
+          {filtered.map((p) => (
+            <button onClick={() => add(p)} className="product" key={p.name}>
+              <b>{p.name}</b>
+              <span>{p.price.toFixed(2)} €</span>
+            </button>
+          ))}
+        </div>
+        <div className="ticket">
+          <h2>Votre commande</h2>
+          {items.length === 0 ? (
+            <p className="stock-meta">Touchez un article pour l’ajouter au ticket.</p>
+          ) : (
+            items.map((i) => (
+              <div className="ticket-line" key={i.name}>
+                <div>
+                  <b>{i.name}</b>
+                  <div className="quantity">
+                    <button onClick={() => delta(i.name, -1)}>
+                      <Minus size={14} />
+                    </button>
+                    {i.quantity}
+                    <button onClick={() => delta(i.name, 1)}>
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                </div>
+                <b>{(i.price * i.quantity).toFixed(2)} €</b>
+              </div>
+            ))
+          )}
+          <div className="ticket-total">
+            <span>Total</span>
+            <span>{total.toFixed(2)} €</span>
+          </div>
+        </div>
+        <div className="checkout">
+          {["CB", "Espèces", "Mixte"].map((p) => (
+            <button
+              key={p}
+              className={`pay-option ${payment === p ? "active" : ""}`}
+              onClick={() => setPayment(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <button
+          disabled={!items.length || saving}
+          onClick={checkout}
+          className="primary-button"
+          style={{ width: "100%", marginTop: 12, opacity: items.length ? 1 : 0.45 }}
+        >
+          {saving ? "Encaissement…" : `Encaisser · ${total.toFixed(2)} €`}
+        </button>
+      </div>
+    </div>
+  );
 }

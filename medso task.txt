@@ -1,0 +1,255 @@
+================================================================================
+KALLOUD — RECAPITULATIF DE SESSION
+Phase 3 : API-01 (schemas de validation) et API-02 (idempotence)
+Date : 6 aout 2026
+Branche : main — 2 commits pousses sur origin/main
+================================================================================
+
+
+1. POINT DE DEPART
+--------------------------------------------------------------------------------
+
+Le depot etait deja clone en local et synchronise avec GitHub. Les phases 0
+(decisions metier), 1 (fondations) et 2 (securite / multi-tenant / UX) etaient
+terminees. La phase 3 « Integrite transactionnelle » demarre par deux taches P0
+dont depend tout l'encaissement canonique : API-01 puis API-02.
+
+Un blocage a lever avant tout code : le dossier node_modules contenait encore
+l'arbre de dependances du prototype d'origine (express, cors, next 15.1.0)
+alors que package.json demande next 16.3.0, zod, vitest et playwright. Et pnpm
+n'etait pas installe sur la machine.
+
+  -> pnpm installe via corepack dans ~/.local/bin, EPINGLE EN VERSION 10.28.2
+     pour correspondre a la CI (.github/workflows) et ne pas faire migrer le
+     format du fichier pnpm-lock.yaml.
+  -> Attention : pnpm n'est pas dans le PATH par defaut. Pour l'utiliser :
+         export PATH="$HOME/.local/bin:$PATH"
+     A ajouter dans ~/.zshrc pour le rendre permanent.
+
+
+2. API-01 — SCHEMAS DE VALIDATION PARTAGES (commit 5738b2d)
+--------------------------------------------------------------------------------
+
+LE PROBLEME
+Chaque route reinventait ses propres controles d'entree, ou n'en avait aucun :
+  - un test `body.type !== "IN"` ecrit a la main dans cash-movements
+  - une boucle Number.isInteger dans le service d'encaissement
+  - aucune verification du tout sur le prix d'un produit
+Consequence concrete : un produit a 4,995 EUR passait sans broncher, alors que
+la decision DEC-05 exige explicitement qu'il soit refuse a la saisie. Et un
+champ manquant devenait une valeur par defaut silencieuse (un paiement sans
+methode devenait un paiement carte).
+
+CE QUI A ETE AJOUTE
+
+  lib/validation/primitives.ts   (nouveau)
+      Les briques reutilisables, une seule definition par regle metier :
+      identifiant, quantite, quantite de stock, montant, taux, texte court,
+      motif, e-mail, pagination, plage de dates, et tous les enums.
+
+  lib/validation/schemas.ts      (nouveau)
+      Un schema par payload d'endpoint (checkout, produits, tables, mouvements
+      de caisse, cloture de journee, tableau de bord, authentification).
+
+  lib/validation/parse.ts        (nouveau)
+      Le pont vers le contrat d'erreur existant : parseJsonBody(),
+      parseSearchParams(), parseOrThrow(), parseIdParam().
+
+DECISIONS DE CONCEPTION
+
+  * Les montants sortent des schemas en CENTIMES ENTIERS. C'est la seule
+    representation dans laquelle la regle DEC-05 « somme des paiements = total »
+    est verifiable sans derive de virgule flottante. La conversion vers le
+    format DECIMAL(10,2) de PostgreSQL se fait au contact de la base, via
+    fromCents().
+
+  * Les objets sont STRICTS : une cle non reconnue est refusee, pas ignoree.
+    Avant, un « cardAmout » mal orthographie devenait un paiement carte a zero
+    euro, en silence.
+
+  * ValidationError porte desormais un detail par champ (ex : la faute est sur
+    « items[0].quantity »). Il n'apparait dans la reponse que lorsqu'il existe,
+    donc les clients actuels lisent exactement le meme contrat qu'avant.
+
+FICHIERS MODIFIES
+  - Les 14 routes metier sous app/api/ passent par les schemas partages
+  - lib/errors.ts, lib/http.ts   (contrat d'erreur enrichi)
+  - lib/auth/service.ts          (schema de credentials centralise)
+  - lib/services/checkout.ts, lib/services/business-day.ts
+  - lib/repositories/cash-movements.ts, lib/repositories/business-days.ts
+    (les montants y sont desormais des chaines DECIMAL, plus des nombres
+     flottants)
+
+CHANGEMENT VISIBLE DANS L'INTERFACE — A LIRE
+  Le bouton « Mixte » a ete RETIRE du ticket de caisse.
+  Il envoyait un paiement MIXED avec 0 EUR des deux cotes, que le serveur
+  enregistrait ensuite integralement en recette carte (c'est l'anomalie P0-02
+  de l'audit). Le nouveau schema refuse ce payload. Laisser le bouton en place
+  aurait produit une erreur permanente sur un moyen de paiement d'apparence
+  disponible. La vraie saisie du montant mixte est le sujet de la tache
+  SALE-05.
+
+  Note liee : les montants partent maintenant du navigateur en chaines a
+  2 decimales fixes. Additionner des prix en JavaScript peut donner
+  9.989999999999998, que le serveur refuse a juste titre.
+
+
+3. API-02 — IDEMPOTENCE ET CONCURRENCE (commit d5b939e)
+--------------------------------------------------------------------------------
+
+LE PROBLEME
+La decision DEC-08 a tranche : pas d'encaissement hors ligne au MVP. Donc
+quand la requete de paiement part mais que la reponse se perd, le client NE
+SAIT PAS si la vente a ete enregistree. Abandonner risque de ne pas encaisser
+une vente deja servie ; renvoyer la requete risque de debiter deux fois. Meme
+probleme, en bien plus frequent, pour un simple double-clic sur « Encaisser ».
+Rien n'existait cote serveur pour traiter ce cas.
+
+CE QUI A ETE AJOUTE
+
+  migrations/0005_idempotency_keys.sql   (nouveau)
+      Table idempotency_keys, portee par etablissement.
+
+  lib/idempotency.ts                     (nouveau)
+      La mecanique : reservation de cle, execution, stockage de la reponse.
+
+  docs/idempotence-et-concurrence.md     (nouveau)
+      La note technique complete : contrat de l'en-tete, codes d'erreur, TTL,
+      ordre de verrouillage, et ce qui reste hors perimetre.
+
+COMMENT CA MARCHE
+Un en-tete « Idempotency-Key » devient OBLIGATOIRE sur les deux operations
+financieres : POST /api/checkout et POST /api/cash-movements.
+
+  Premiere requete avec cette cle .......... l'operation s'execute, 201
+  Rejeu apres succes, meme contenu ......... la reponse enregistree est
+                                             rejouee, 201 + en-tete
+                                             « Idempotent-Replay: true »
+  Rejeu pendant que la 1re tourne .......... 409, « deja en cours »
+  Meme cle, contenu different .............. 409, refuse
+  L'operation a echoue (stock, etc.) ....... la cle est liberee, une requete
+                                             corrigee avec la meme cle passe
+
+LE POINT D'IMPLEMENTATION QUI FAIT TOUT TENIR
+La reservation de la cle est committee EN DEHORS de la transaction metier. Si
+l'INSERT qui reserve la cle vivait dans la meme transaction que la vente, un
+ROLLBACK l'effacerait — et deux requetes concurrentes portant la meme cle
+passeraient alors toutes les deux. C'est l'index unique
+(location_id, endpoint, idempotency_key) qui departage atomiquement les
+concurrents.
+
+Le contenu de la requete est identifie par une empreinte SHA-256 de sa forme
+JSON canonique (cles triees recursivement). Sans cela, un rejeu parfaitement
+legitime dont les champs se serialisent dans un autre ordre serait pris pour
+une requete differente et refuse.
+
+DEUX DEFAUTS DE CONCURRENCE CORRIGES EN PASSANT
+Trouves en lisant lib/services/checkout.ts, hors de la lettre d'API-02 mais
+dans le meme fichier et de meme nature :
+
+  1. Le controle de stock s'appliquait LIGNE PAR LIGNE. Un ticket portant deux
+     fois le meme produit passait deux controles de 3 unites contre un stock de
+     5, puis decrementait a -1. Les lignes d'un meme produit sont desormais
+     fusionnees avant le controle.
+
+  2. Les verrous FOR UPDATE etaient pris DANS L'ORDRE FOURNI PAR LE CLIENT.
+     Deux ventes simultanees portant sur les produits {7, 12} et {12, 7}
+     pouvaient donc se bloquer mutuellement — un deadlock que PostgreSQL
+     tranche en tuant une transaction, avec une erreur sur laquelle le caissier
+     n'a aucune prise. Les lignes sont maintenant triees par identifiant de
+     produit avant verrouillage.
+
+COTE NAVIGATEUR
+  lib/client/api.ts                 transmet la cle en en-tete
+  components/order-drawer.tsx       genere une cle par tentative de paiement
+  components/cash-movement-modal.tsx  idem pour les mouvements de caisse
+
+  Regle importante : une cle par OPERATION VOULUE, pas par requete HTTP. Elle
+  est conservee a l'identique sur chaque reessai, et renouvelee seulement apres
+  un succes. Une cle regeneree a chaque tentative annulerait toute la garantie.
+
+
+4. TESTS AJOUTES
+--------------------------------------------------------------------------------
+
+  tests/unit/validation.test.ts         Cas limites de DEC-05 : 4,995 refuse,
+                                        12.3 -> 1230 centimes, notation
+                                        exponentielle, plages inversees,
+                                        invariants du checkout.
+  tests/unit/idempotency.test.ts        Stabilite de l'empreinte canonique,
+                                        format de la cle.
+  tests/unit/checkout-items.test.ts     Fusion des lignes et ORDRE DE TRI.
+  tests/unit/architecture.test.ts       (etendu) Interdit a toute future route
+                                        de lire un corps de requete sans
+                                        schema.
+  tests/integration/validation.test.ts  Compte les acces reels a la base pour
+                                        prouver le « AVANT l'acces base » du
+                                        critere d'acceptation — pas seulement
+                                        le code 400.
+  tests/integration/idempotency.test.ts Rejeu, double-clic concurrent,
+                                        isolation entre etablissements,
+                                        liberation apres echec.
+  tests/e2e/idempotency.spec.ts         La chaine HTTP complete sur serveur
+                                        reel, en-tete compris.
+
+UN POINT D'HONNETETE SUR CES TESTS
+Mon test d'integration « ne deadlocke pas » passait AUSSI sans le correctif :
+il ne prouvait donc rien. Provoquer un deadlock a la demande suppose de
+suspendre une transaction entre ses deux verrous, ce que la suite de tests ne
+peut pas forcer. Je l'ai garde comme garde-fou de regression, reformule pour
+qu'il ne pretende pas le contraire, et j'ai place la vraie preuve dans
+tests/unit/checkout-items.test.ts, qui asserte l'ordre de tri directement.
+J'ai en revanche verifie que le test de fusion des lignes, lui, echoue bien
+sans le correctif.
+
+
+5. RESULTATS DE VERIFICATION
+--------------------------------------------------------------------------------
+
+  lint (eslint) ............................ OK
+  format (prettier) ........................ OK
+  typecheck (tsc) .......................... OK
+  tests unitaires + integration ............ 151 tests, 11 fichiers — OK
+  tests end-to-end (playwright) ............ 12 tests — OK
+  build (next build) ....................... OK
+  audit de securite (niveau high) .......... aucune vulnerabilite
+
+  Reproductibilite sur base neuve verifiee :
+      db:reset -> 5 migrations appliquees -> seed -> 151 tests verts
+
+
+6. DEUX POINTS QUI RESTENT DE TON COTE
+--------------------------------------------------------------------------------
+
+  [A] TOKEN GITHUB EN CLAIR — a traiter en priorite
+      Ton remote git contient un jeton d'acces personnel en clair dans l'URL :
+          https://ghp_xxxxxxxx@github.com/EzkaMehdi/Kalloud.git
+      Il est stocke en clair dans .git/config et apparait dans les logs.
+      A faire :
+        1. le revoquer sur github.com/settings/tokens
+        2. repointer le remote, par exemple en SSH :
+             git remote set-url origin git@github.com:EzkaMehdi/Kalloud.git
+           ou en utilisant le gestionnaire d'identifiants de macOS.
+
+  [B] LE SCRIPT « pnpm setup » EST MASQUE
+      « setup » est aussi une commande integree de pnpm (elle configure le
+      shell). Lancer « pnpm setup » affiche des instructions PNPM_HOME au lieu
+      d'initialiser la base. Seul « pnpm run setup » fonctionne.
+      Le renommer (par exemple en « db:setup » ou « bootstrap ») eviterait le
+      piege. Une tache est proposee pour ca.
+
+
+7. LA SUITE DU BACKLOG
+--------------------------------------------------------------------------------
+
+Les taches API-01 et API-02 sont cochees dans tasks.md. La sequence prevue
+enchaine avec :
+
+  ORD-01    cycle de vie canonique des commandes (OPEN/PAID/CANCELLED/REFUNDED)
+  CASH-01   fiabiliser le modele de journee de caisse
+  STK-01..03  ledger de mouvements de stock et service transactionnel
+  SALE-01..10 catalogue reel, modele de paiements, encaissement canonique
+              (c'est SALE-03 qui corrige definitivement l'anomalie P0-02, et
+               SALE-05 qui ramene le paiement mixte)
+
+================================================================================

@@ -16,7 +16,13 @@ export interface CashMovementRow {
 export interface CreateCashMovementInput {
   businessDayId: number | null;
   type: CashMovementType;
-  amount: number;
+  /**
+   * A `DECIMAL(10,2)`-shaped string ("20.00"), as produced by
+   * `fromCents()`. Deliberately not a JS number: binary floating point
+   * cannot represent every 2-decimal amount exactly, and this column is the
+   * cash journal (DEC-05).
+   */
+  amount: string;
   reason: string;
   createdBy: number;
 }

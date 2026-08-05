@@ -1,26 +1,15 @@
 import { withTransaction } from "../db";
 import { NotFoundError, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
+import { fromCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
 import { decrementProductStock, lockActiveProductForCheckout } from "../repositories/products";
 import { setDiningTableStatus } from "../repositories/tables";
 import type { RequestContext } from "../context";
+import type { PaymentMethod } from "../validation/primitives";
+import type { CheckoutBody } from "../validation/schemas";
 
-export interface CheckoutItemInput {
-  productId: number;
-  quantity: number;
-  notes?: string | null;
-}
-
-export type PaymentMethod = "CASH" | "CARD" | "MIXED";
-
-export interface CheckoutInput {
-  tableId: number | null;
-  items: CheckoutItemInput[];
-  paymentMethod: PaymentMethod;
-  cashAmount?: number;
-  cardAmount?: number;
-}
+export type { PaymentMethod };
 
 export interface CheckoutOrderResult {
   id: number;
@@ -53,20 +42,12 @@ export interface CheckoutResult {
  */
 export async function performCheckout(
   context: RequestContext,
-  input: CheckoutInput,
+  input: CheckoutBody,
 ): Promise<CheckoutResult> {
-  if (!Array.isArray(input.items) || input.items.length === 0) {
-    throw new ValidationError("Ajoutez au moins un article.");
-  }
-  for (const item of input.items) {
-    if (!Number.isInteger(item.productId) || item.productId <= 0) {
-      throw new ValidationError("Identifiant de produit invalide.");
-    }
-    if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
-      throw new ValidationError("Quantité invalide.");
-    }
-  }
-
+  // Input validation now happens at the route boundary against
+  // checkoutBodySchema (API-01), before this function — and therefore before
+  // the database — is reached at all. `input` is the schema's output type,
+  // so ids, quantities and amounts are already known-good here.
   return withTransaction(async (client) => {
     let total = 0;
     const resolvedItems: {
@@ -103,8 +84,14 @@ export async function performCheckout(
       throw new ValidationError("Aucune journée de caisse ouverte.");
     }
 
-    const cashAmount = input.cashAmount ?? 0;
-    const cardAmount = input.cardAmount || total; // TODO(SALE-03): reproduces P0-02, see module doc comment.
+    // TODO(SALE-03): still reproduces P0-02 (see module doc comment) — the
+    // fallback to `total` when no card amount is given is what records a
+    // cash sale as card revenue. API-01 only changed the *unit*: amounts now
+    // arrive as validated integer cents, converted here to the DECIMAL(10,2)
+    // form Postgres stores. SALE-03 replaces this block with the canonical
+    // server-side computation of cash + card = total.
+    const cashAmount = fromCents(input.cashAmountCents);
+    const cardAmount = input.cardAmountCents > 0 ? fromCents(input.cardAmountCents) : total;
 
     const {
       rows: [order],

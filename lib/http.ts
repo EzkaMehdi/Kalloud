@@ -6,6 +6,7 @@ import {
   PayloadTooLargeError,
   ServiceUnavailableError,
   ValidationError,
+  type ValidationIssue,
 } from "./errors";
 import { getRequestId, logger, runWithRequestContext } from "./logger";
 
@@ -49,6 +50,7 @@ function toErrorResponse(error: unknown, requestId: string, durationMs: number):
       error.code,
       error.expose ? error.message : "Une erreur est survenue.",
       requestId,
+      error instanceof ValidationError ? error.details : undefined,
     );
   }
 
@@ -76,10 +78,14 @@ export function jsonError(
   code: string,
   message: string,
   requestId?: string,
+  details?: readonly ValidationIssue[],
 ): NextResponse {
   const id = requestId ?? getRequestId();
   return NextResponse.json(
-    { error: { code, message, requestId: id ?? null } },
+    // `details` is omitted entirely when absent rather than sent as null, so
+    // the envelope every existing client already parses is byte-identical
+    // for the errors that have no field-level breakdown (API-01).
+    { error: { code, message, requestId: id ?? null, ...(details?.length ? { details } : {}) } },
     { status: statusCode, headers: id ? { "x-request-id": id } : undefined },
   );
 }
@@ -119,15 +125,6 @@ export async function readJsonBody<T = unknown>(
   } catch {
     throw new ValidationError("Le corps de la requête n'est pas un JSON valide.");
   }
-}
-
-/** Parses a dynamic route segment (always a string) into a positive integer id, or throws a clean 400. */
-export function parseIdParam(value: string, label = "identifiant"): number {
-  const id = Number(value);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new ValidationError(`${label} invalide : "${value}".`);
-  }
-  return id;
 }
 
 /**

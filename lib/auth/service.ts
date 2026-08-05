@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { pool, withTransaction } from "../db";
 import { logger } from "../logger";
 import { TooManyRequestsError, UnauthenticatedError, ValidationError } from "../errors";
@@ -11,6 +10,8 @@ import {
 } from "./password-reset";
 import { isLoginRateLimited, recordLoginAttempt } from "./rate-limit";
 import { createSession, revokeAllSessionsForUser, revokeSessionByToken } from "./session";
+import { parseOrThrow } from "../validation/parse";
+import { credentialsSchema } from "../validation/schemas";
 
 /**
  * A syntactically valid bcrypt hash that matches no real password. Running
@@ -19,15 +20,6 @@ import { createSession, revokeAllSessionsForUser, revokeSessionByToken } from ".
  * which is cheap insurance against trivial timing-based user enumeration.
  */
 const DUMMY_PASSWORD_HASH = "$2a$10$C6UzMDM.H6dfI/f/IKcEeO0fFvXsBdBnRP.SoOCF.oW0j5r08zSHu";
-
-const credentialsSchema = z.object({
-  email: z
-    .string()
-    .trim()
-    .min(1, "L'adresse e-mail est requise.")
-    .email("Adresse e-mail invalide."),
-  password: z.string().min(1, "Le mot de passe est requis."),
-});
 
 export interface LoginInput {
   email: string;
@@ -43,11 +35,15 @@ export interface LoginResult {
 
 /** SEC-03: validates credentials, enforces brute-force limits, and returns a fresh session token. */
 export async function login(input: LoginInput): Promise<LoginResult> {
-  const parsed = credentialsSchema.safeParse({ email: input.email, password: input.password });
-  if (!parsed.success) {
-    throw new ValidationError(parsed.error.issues[0]?.message ?? "Identifiants invalides.");
-  }
-  const { email, password } = parsed.data;
+  // Revalidated here even though the route already parsed the body
+  // (API-01): login is also reachable from tests and future non-HTTP entry
+  // points, and this is the function that decides whether a password is
+  // checked at all.
+  const { email, password } = parseOrThrow(
+    credentialsSchema,
+    { email: input.email, password: input.password },
+    "Identifiants invalides.",
+  );
 
   if (await isLoginRateLimited(pool, email, input.ipAddress)) {
     throw new TooManyRequestsError(

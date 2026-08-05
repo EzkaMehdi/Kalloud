@@ -25,10 +25,18 @@ const products = [
   { id: 6, name: "Tiramisu maison", price: 7, cat: "Desserts" },
 ];
 const cats = ["Tout", "Chichas", "Boissons", "Plats", "Desserts"];
+
+/**
+ * TODO(SALE-05, phase 3): "Mixte" is deliberately absent. It used to be
+ * offered here and sent `MIXED` with both amounts at zero, which the server
+ * then recorded as a full card payment (audit finding P0-02) — a payment
+ * mode that looked supported and silently falsified the cash journal.
+ * API-01's checkout schema now refuses that payload outright, and SALE-05
+ * adds the real split input that will bring the option back.
+ */
 const paymentOptions = [
   { value: "CB", label: "CB" },
   { value: "Espèces", label: "Espèces" },
-  { value: "Mixte", label: "Mixte" },
 ] as const;
 
 type Item = { id: number; name: string; price: number; quantity: number };
@@ -83,15 +91,20 @@ export function OrderDrawer({
     setSaving(true);
     setError("");
     try {
-      const method = payment === "CB" ? "CARD" : payment === "Espèces" ? "CASH" : "MIXED";
+      const method = payment === "CB" ? "CARD" : "CASH";
+      // Amounts go out as fixed 2-decimal strings: summing prices in
+      // JavaScript can yield 9.989999999999998, which the server's money
+      // schema rightly refuses (DEC-05). SALE-06 removes the question
+      // entirely by taking the total from the server's response.
+      const amount = total.toFixed(2);
       await apiFetch("/api/checkout", {
         method: "POST",
         body: JSON.stringify({
           tableId,
           items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
           paymentMethod: method,
-          cashAmount: method === "CASH" ? total : 0,
-          cardAmount: method === "CARD" ? total : 0,
+          cashAmount: method === "CASH" ? amount : "0.00",
+          cardAmount: method === "CARD" ? amount : "0.00",
         }),
       });
       onComplete(total);

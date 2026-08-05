@@ -1,6 +1,7 @@
 import { withTransaction } from "../db";
 import { ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
+import { fromCents, toCents } from "../money";
 import {
   type BusinessDayRow,
   closeBusinessDay,
@@ -27,8 +28,10 @@ export interface CloseAndReopenResult {
  */
 export async function closeAndReopenBusinessDay(
   context: RequestContext,
-  nextOpeningCash: number,
+  nextOpeningCashCents: number,
 ): Promise<CloseAndReopenResult> {
+  const nextOpeningCash = fromCents(nextOpeningCashCents);
+
   return withTransaction(async (client) => {
     const activeDay = await getActiveBusinessDay(client, context.locationId);
     if (!activeDay) {
@@ -36,7 +39,13 @@ export async function closeAndReopenBusinessDay(
     }
 
     const summary = await getBusinessDaySummary(client, context.locationId, activeDay.id);
-    const calculatedClosingCash = Number(activeDay.opening_cash) + Number(summary.cash_revenue);
+    // Summed in integer cents rather than with `Number(a) + Number(b)`:
+    // adding two DECIMAL(10,2) values as binary floats can land a centime
+    // off, and this figure is what the closing cash count is compared to
+    // (DEC-05).
+    const calculatedClosingCash = fromCents(
+      toCents(activeDay.opening_cash) + toCents(summary.cash_revenue),
+    );
     const closed = await closeBusinessDay(
       client,
       context.locationId,

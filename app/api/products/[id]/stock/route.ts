@@ -3,16 +3,13 @@ import { recordAuditEvent } from "@/lib/audit";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
-import { ValidationError } from "@/lib/errors";
-import { apiRoute, jsonOk, parseIdParam, readJsonBody } from "@/lib/http";
+import { apiRoute, jsonOk } from "@/lib/http";
 import { overwriteProductStockQuantity } from "@/lib/repositories/products";
+import { parseIdParam, parseJsonBody } from "@/lib/validation/parse";
+import { updateStockSchema } from "@/lib/validation/schemas";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
-}
-
-interface UpdateStockBody {
-  quantity?: number;
 }
 
 /**
@@ -26,10 +23,7 @@ export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params
 
   const { id } = await params;
   const productId = parseIdParam(id, "Identifiant produit");
-  const body = await readJsonBody<UpdateStockBody>(request);
-  if (typeof body.quantity !== "number" || !Number.isFinite(body.quantity) || body.quantity < 0) {
-    throw new ValidationError("Quantité invalide.");
-  }
+  const body = await parseJsonBody(request, updateStockSchema);
 
   const product = await overwriteProductStockQuantity(
     pool,

@@ -62,3 +62,30 @@ describe("SEC-06: route handlers never query the database directly", () => {
     },
   );
 });
+
+/**
+ * API-01's acceptance criterion is that *any* invalid input is rejected
+ * before the database is reached. Per-endpoint tests can only prove that for
+ * the endpoints that exist today; this check is what keeps it true for the
+ * ones phase 3+ will add. `readJsonBody` returns an unchecked value by
+ * design (it only guards size and JSON syntax) — reaching for it directly in
+ * a route handler is exactly how unvalidated input used to reach a query,
+ * so the only sanctioned entry point is parseJsonBody(request, schema).
+ */
+describe("API-01: route handlers validate every request body against a schema", () => {
+  const bodyReadingFiles = apiFiles.filter((file) =>
+    /readJsonBody|parseJsonBody/.test(readFileSync(file, "utf8")),
+  );
+
+  it("finds route handlers that read a request body", () => {
+    expect(bodyReadingFiles.length).toBeGreaterThan(0);
+  });
+
+  it.each(bodyReadingFiles)("%s parses its body with parseJsonBody, not readJsonBody", (file) => {
+    const content = readFileSync(file, "utf8");
+    expect(
+      /\breadJsonBody\s*[(<]/.test(content),
+      `${file} calls readJsonBody() directly. Use parseJsonBody(request, schema) from lib/validation/parse.ts so the payload is validated before any database access.`,
+    ).toBe(false);
+  });
+});

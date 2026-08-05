@@ -1,14 +1,12 @@
 import type { NextRequest } from "next/server";
 import { requestPasswordReset } from "@/lib/auth/service";
-import { apiRoute, jsonOk, readJsonBody } from "@/lib/http";
-
-interface RequestBody {
-  email?: string;
-}
+import { apiRoute, jsonOk } from "@/lib/http";
+import { parseJsonBody } from "@/lib/validation/parse";
+import { passwordResetRequestSchema } from "@/lib/validation/schemas";
 
 export const POST = apiRoute(async (request: NextRequest) => {
-  const body = await readJsonBody<RequestBody>(request);
-  const result = await requestPasswordReset(body.email ?? "");
+  const body = await parseJsonBody(request, passwordResetRequestSchema);
+  const result = await requestPasswordReset(body.email);
 
   // Same response whether or not the address exists (SEC-03: no account
   // enumeration). The token is only ever included outside production,

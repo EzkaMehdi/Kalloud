@@ -3,20 +3,13 @@ import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
 import { ValidationError } from "@/lib/errors";
-import { apiRoute, jsonOk, parseIdParam, readJsonBody } from "@/lib/http";
-import {
-  renameDiningTable,
-  setDiningTableStatus,
-  type DiningTableStatus,
-} from "@/lib/repositories/tables";
+import { apiRoute, jsonOk } from "@/lib/http";
+import { renameDiningTable, setDiningTableStatus } from "@/lib/repositories/tables";
+import { parseIdParam, parseJsonBody } from "@/lib/validation/parse";
+import { updateDiningTableSchema } from "@/lib/validation/schemas";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
-}
-
-interface UpdateTableBody {
-  name?: string;
-  status?: DiningTableStatus;
 }
 
 /**
@@ -30,7 +23,11 @@ export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params
   const context = await requireRequestContext();
   const { id } = await params;
   const tableId = parseIdParam(id, "Identifiant table");
-  const body = await readJsonBody<UpdateTableBody>(request);
+  // updateDiningTableSchema guarantees the status enum and that at least one
+  // field is present, so the two manual guards this replaced are gone
+  // (API-01). The permission branch below stays: it is authorisation, not
+  // validation, and the two must not be conflated.
+  const body = await parseJsonBody(request, updateDiningTableSchema);
 
   if (body.name !== undefined) {
     requirePermission(context.role, "tables:manage");
@@ -39,9 +36,6 @@ export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params
   }
 
   if (body.status !== undefined) {
-    if (body.status !== "FREE" && body.status !== "OCCUPIED") {
-      throw new ValidationError('Statut de table invalide (attendu "FREE" ou "OCCUPIED").');
-    }
     requirePermission(context.role, "orders:create");
     const table = await setDiningTableStatus(pool, context.locationId, tableId, body.status);
     return jsonOk(table);

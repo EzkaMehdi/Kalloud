@@ -1,19 +1,19 @@
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
-import { apiRoute, jsonOk, readJsonBody } from "@/lib/http";
+import { apiRoute, jsonOk } from "@/lib/http";
 import { closeAndReopenBusinessDay } from "@/lib/services/business-day";
-
-interface CloseBody {
-  nextOpeningCash?: number;
-}
+import { parseJsonBody } from "@/lib/validation/parse";
+import { closeBusinessDaySchema } from "@/lib/validation/schemas";
 
 export const POST = apiRoute(async (request: NextRequest) => {
   const context = await requireRequestContext();
   requirePermission(context.role, "business_day:close");
   requirePermission(context.role, "business_day:open");
 
-  const body = await readJsonBody<CloseBody>(request);
-  const result = await closeAndReopenBusinessDay(context, Number(body.nextOpeningCash ?? 0));
+  // `Number(body.nextOpeningCash ?? 0)` used to turn "abc" into NaN and hand
+  // it straight to a DECIMAL column; the schema rejects it first (API-01).
+  const body = await parseJsonBody(request, closeBusinessDaySchema);
+  const result = await closeAndReopenBusinessDay(context, body.nextOpeningCash ?? 0);
   return jsonOk(result);
 });

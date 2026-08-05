@@ -22,9 +22,29 @@ export class AppError extends Error {
   }
 }
 
+/** One rejected field, so a form can highlight the input rather than a banner (UX-05). */
+export interface ValidationIssue {
+  field: string;
+  message: string;
+}
+
 export class ValidationError extends AppError {
-  constructor(message: string, cause?: unknown) {
-    super(message, { statusCode: 400, code: "VALIDATION_ERROR", cause });
+  /**
+   * Per-field detail, populated by lib/validation/parse.ts. Optional and
+   * additive: the `{ error: { code, message, requestId } }` envelope every
+   * existing client reads is unchanged, `details` is simply present when the
+   * server knows which fields were at fault.
+   */
+  readonly details?: readonly ValidationIssue[];
+
+  constructor(
+    message: string,
+    options: { cause?: unknown; details?: readonly ValidationIssue[] } = {},
+  ) {
+    super(message, { statusCode: 400, code: "VALIDATION_ERROR", cause: options.cause });
+    if (options.details?.length) {
+      this.details = options.details;
+    }
   }
 }
 

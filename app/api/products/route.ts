@@ -2,8 +2,11 @@ import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
-import { apiRoute, jsonOk, readJsonBody } from "@/lib/http";
+import { apiRoute, jsonOk } from "@/lib/http";
+import { fromCents } from "@/lib/money";
 import { createProduct, listProducts } from "@/lib/repositories/products";
+import { parseJsonBody } from "@/lib/validation/parse";
+import { createProductSchema } from "@/lib/validation/schemas";
 
 export const GET = apiRoute(async () => {
   const context = await requireRequestContext();
@@ -11,23 +14,19 @@ export const GET = apiRoute(async () => {
   return jsonOk(products);
 });
 
-interface CreateProductBody {
-  categoryId?: number | null;
-  name?: string;
-  price?: string;
-  stockQuantity?: number;
-  alertThreshold?: number;
-}
-
 export const POST = apiRoute(async (request: NextRequest) => {
   const context = await requireRequestContext();
   requirePermission(context.role, "catalog:manage");
 
-  const body = await readJsonBody<CreateProductBody>(request);
+  // Previously an unnamed product became `""` and an unpriced one `"0"`,
+  // both silently inserted. API-01 makes name and price required, and
+  // enforces DEC-05's "2 décimales exactes" on the price — the rule that
+  // rejects a 4,995 € product before it can ever be sold at a rounded price.
+  const body = await parseJsonBody(request, createProductSchema);
   const product = await createProduct(pool, context.locationId, {
     categoryId: body.categoryId ?? null,
-    name: body.name ?? "",
-    price: body.price ?? "0",
+    name: body.name,
+    price: fromCents(body.price),
     stockQuantity: body.stockQuantity,
     alertThreshold: body.alertThreshold,
   });

@@ -157,8 +157,8 @@ describe("SEC-08: floor plan isolation", () => {
 
 describe("SEC-08: cash and business-day isolation", () => {
   it("getActiveBusinessDay never crosses tenants", async () => {
-    const dayA = await openBusinessDay(pool, tenantA.locationId, 100);
-    const dayB = await openBusinessDay(pool, tenantB.locationId, 200);
+    const dayA = await openBusinessDay(pool, tenantA.locationId, "100.00");
+    const dayB = await openBusinessDay(pool, tenantB.locationId, "200.00");
 
     const activeForA = await getActiveBusinessDay(pool, tenantA.locationId);
     expect(activeForA?.id).toBe(dayA.id);
@@ -166,11 +166,11 @@ describe("SEC-08: cash and business-day isolation", () => {
   });
 
   it("refuses to close another tenant's business day", async () => {
-    const dayB = await openBusinessDay(pool, tenantB.locationId, 200);
+    const dayB = await openBusinessDay(pool, tenantB.locationId, "200.00");
 
-    await expect(closeBusinessDay(pool, tenantA.locationId, dayB.id, 500)).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
+    await expect(
+      closeBusinessDay(pool, tenantA.locationId, dayB.id, "500.00"),
+    ).rejects.toBeInstanceOf(NotFoundError);
 
     const stillOpen = await getActiveBusinessDay(pool, tenantB.locationId);
     expect(stillOpen?.id).toBe(dayB.id);
@@ -179,20 +179,20 @@ describe("SEC-08: cash and business-day isolation", () => {
 
   it("business day summaries and cash movements never mix tenants", async () => {
     const ownerB = await createTestUser(pool, tenantB, "OWNER");
-    const dayA = await openBusinessDay(pool, tenantA.locationId, 100);
-    const dayB = await openBusinessDay(pool, tenantB.locationId, 200);
+    const dayA = await openBusinessDay(pool, tenantA.locationId, "100.00");
+    const dayB = await openBusinessDay(pool, tenantB.locationId, "200.00");
 
     await createCashMovement(pool, tenantA.locationId, {
       businessDayId: dayA.id,
       type: "IN",
-      amount: 10,
+      amount: "10.00",
       reason: "A movement",
       createdBy: contextA.userId,
     });
     await createCashMovement(pool, tenantB.locationId, {
       businessDayId: dayB.id,
       type: "IN",
-      amount: 999,
+      amount: "999.00",
       reason: "B movement",
       createdBy: ownerB.userId,
     });
@@ -252,7 +252,7 @@ describe("SEC-08: audit log isolation", () => {
 
 describe("SEC-08: checkout cannot reach across tenants", () => {
   it("rejects a checkout that references another tenant's product and leaves both tenants' stock untouched", async () => {
-    await openBusinessDay(pool, tenantA.locationId, 100);
+    await openBusinessDay(pool, tenantA.locationId, "100.00");
     const productB = await createProduct(pool, tenantB.locationId, {
       categoryId: null,
       name: "Tenant B Product",
@@ -265,7 +265,8 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
         tableId: null,
         items: [{ productId: productB.id, quantity: 1 }],
         paymentMethod: "CARD",
-        cardAmount: 10,
+        cashAmountCents: 0,
+        cardAmountCents: 1000,
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
 
@@ -276,7 +277,7 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
   });
 
   it("still lets tenant A check out its own product normally (isolation is not over-blocking)", async () => {
-    await openBusinessDay(pool, tenantA.locationId, 100);
+    await openBusinessDay(pool, tenantA.locationId, "100.00");
     const productA = await createProduct(pool, tenantA.locationId, {
       categoryId: null,
       name: "Tenant A Product",
@@ -288,7 +289,8 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
       tableId: null,
       items: [{ productId: productA.id, quantity: 2 }],
       paymentMethod: "CARD",
-      cardAmount: 20,
+      cashAmountCents: 0,
+      cardAmountCents: 2000,
     });
 
     expect(result.total).toBe(20);
@@ -300,7 +302,7 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
     // Tenant B has an open day, tenant A does not - a bug that resolved
     // "the" active business day globally instead of scoping it would let
     // this succeed against tenant B's day.
-    await openBusinessDay(pool, tenantB.locationId, 100);
+    await openBusinessDay(pool, tenantB.locationId, "100.00");
     const productA = await createProduct(pool, tenantA.locationId, {
       categoryId: null,
       name: "Tenant A Product",
@@ -313,7 +315,8 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
         tableId: null,
         items: [{ productId: productA.id, quantity: 1 }],
         paymentMethod: "CARD",
-        cardAmount: 10,
+        cashAmountCents: 0,
+        cardAmountCents: 1000,
       }),
     ).rejects.toBeInstanceOf(ValidationError);
   });

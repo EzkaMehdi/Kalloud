@@ -67,11 +67,15 @@ export async function getRevenueBetween(
   return rows[0];
 }
 
+/**
+ * `closingCash`/`openingCash` are `DECIMAL(10,2)`-shaped strings ("150.00"),
+ * as produced by `fromCents()` — see the note on CreateCashMovementInput.
+ */
 export async function closeBusinessDay(
   db: Queryable,
   locationId: number,
   businessDayId: number,
-  closingCash: number,
+  closingCash: string,
 ): Promise<BusinessDayRow> {
   const { rows } = await db.query<BusinessDayRow>(
     `UPDATE business_days SET status = 'CLOSED', closed_at = now(), closing_cash = $3
@@ -86,7 +90,7 @@ export async function closeBusinessDay(
 export async function openBusinessDay(
   db: Queryable,
   locationId: number,
-  openingCash: number,
+  openingCash: string,
 ): Promise<BusinessDayRow> {
   const {
     rows: [row],

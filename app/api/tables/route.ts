@@ -2,9 +2,10 @@ import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
-import { ValidationError } from "@/lib/errors";
-import { apiRoute, jsonOk, readJsonBody } from "@/lib/http";
+import { apiRoute, jsonOk } from "@/lib/http";
 import { createDiningTable, listDiningTables } from "@/lib/repositories/tables";
+import { parseJsonBody } from "@/lib/validation/parse";
+import { createDiningTableSchema } from "@/lib/validation/schemas";
 
 export const GET = apiRoute(async () => {
   const context = await requireRequestContext();
@@ -12,18 +13,11 @@ export const GET = apiRoute(async () => {
   return jsonOk(tables);
 });
 
-interface CreateTableBody {
-  name?: string;
-}
-
 export const POST = apiRoute(async (request: NextRequest) => {
   const context = await requireRequestContext();
   requirePermission(context.role, "tables:manage");
 
-  const body = await readJsonBody<CreateTableBody>(request);
-  if (!body.name || !body.name.trim()) {
-    throw new ValidationError("Le nom de la table est requis.");
-  }
-  const table = await createDiningTable(pool, context.locationId, body.name.trim());
+  const body = await parseJsonBody(request, createDiningTableSchema);
+  const table = await createDiningTable(pool, context.locationId, body.name);
   return jsonOk(table, { status: 201 });
 });

@@ -18,6 +18,10 @@ export function CashMovementModal({
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  // API-02: same rule as the checkout drawer — one key per intended
+  // movement, reused on every retry so a lost response cannot become two
+  // withdrawals in the cash journal.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -31,8 +35,10 @@ export function CashMovementModal({
     try {
       await apiFetch("/api/cash-movements", {
         method: "POST",
-        body: JSON.stringify({ type, amount: value, reason: reason.trim() }),
+        idempotencyKey,
+        body: JSON.stringify({ type, amount: value.toFixed(2), reason: reason.trim() }),
       });
+      setIdempotencyKey(crypto.randomUUID());
       onSaved(value, type);
       onClose();
     } catch (caught) {

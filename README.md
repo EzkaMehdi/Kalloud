@@ -140,6 +140,14 @@ bloque le workflow ; le rapport Playwright est conservé comme artefact.
 - **Autorisations** : matrice de rôles `OWNER`/`MANAGER`/`CASHIER` codée dans
   `lib/authz.ts`, alignée sur
   [`docs/decisions/DEC-07-roles-permissions.md`](./docs/decisions/DEC-07-roles-permissions.md).
+- **Validation des entrées** : schémas partagés dans `lib/validation/*`
+  (zod). Toute route valide son corps avec `parseJsonBody(request, schema)`
+  avant le moindre accès base ; les montants entrent en centimes entiers,
+  conformément à
+  [`docs/decisions/DEC-05-regles-monetaires.md`](./docs/decisions/DEC-05-regles-monetaires.md).
+- **Idempotence** : les opérations financières (`POST /api/checkout`,
+  `POST /api/cash-movements`) exigent un en-tête `Idempotency-Key` — voir
+  [`docs/idempotence-et-concurrence.md`](./docs/idempotence-et-concurrence.md).
 - **Journalisation** : logs JSON structurés et corrélés par requête
   (`lib/logger.ts`).
 - **Sécurité réseau** : en-têtes, vérification d'origine et limitation de
@@ -155,6 +163,7 @@ lib/
   repositories/  Accès base scopé par établissement
   services/      Logique métier multi-tables (encaissement, clôture, KPI)
   auth/          Authentification, sessions, mots de passe
+  validation/    Schémas d'entrée partagés (primitives, schémas, parsing)
   client/        Utilitaires côté navigateur (fetch, hooks)
 migrations/      Schéma versionné (SQL numéroté)
 scripts/         Bootstrap local (base, migrations, seed)

@@ -34,6 +34,13 @@ export interface ApiFetchOptions extends RequestInit {
    * a user who is, by definition, already on the login page.
    */
   suppressAuthRedirect?: boolean;
+  /**
+   * API-02: required by the financial endpoints. The caller must generate it
+   * once per *intended* operation and reuse the same value on every retry —
+   * a fresh key per attempt would defeat the whole mechanism, since the
+   * server has no other way to tell a retry from a second sale.
+   */
+  idempotencyKey?: string;
 }
 
 export async function apiFetch<T>(input: string, init?: ApiFetchOptions): Promise<T> {
@@ -41,7 +48,11 @@ export async function apiFetch<T>(input: string, init?: ApiFetchOptions): Promis
   try {
     response = await fetch(input, {
       ...init,
-      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+      headers: {
+        "Content-Type": "application/json",
+        ...(init?.idempotencyKey ? { "Idempotency-Key": init.idempotencyKey } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     throw new ApiError(

@@ -57,6 +57,16 @@ export function OrderDrawer({
   const [payment, setPayment] = useState<(typeof paymentOptions)[number]["value"]>("CB");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * API-02: one key per payment *attempt of this ticket*, not per HTTP
+   * request. It is created when the drawer opens and deliberately kept
+   * across failures and retries — that is precisely what lets the server
+   * recognise a double-click, or a retry after a lost response, as the same
+   * sale (DEC-08). A new key is only minted once the sale has succeeded and
+   * the drawer is reused. SALE-08 builds the "état incertain / récupération"
+   * experience on top of this.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
   const filtered = products.filter((p) => category === "Tout" || p.cat === category);
   const total = useMemo(
@@ -99,6 +109,7 @@ export function OrderDrawer({
       const amount = total.toFixed(2);
       await apiFetch("/api/checkout", {
         method: "POST",
+        idempotencyKey,
         body: JSON.stringify({
           tableId,
           items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
@@ -107,6 +118,9 @@ export function OrderDrawer({
           cardAmount: method === "CARD" ? amount : "0.00",
         }),
       });
+      // The sale is recorded; the next one is a different operation and
+      // must not reuse this key.
+      setIdempotencyKey(crypto.randomUUID());
       onComplete(total);
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");

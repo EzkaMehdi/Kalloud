@@ -28,6 +28,54 @@ export interface CheckoutResult {
   total: number;
 }
 
+export interface MergedItem {
+  productId: number;
+  quantity: number;
+  notes: string | null;
+}
+
+/**
+ * Collapses repeated lines of the same product into one, and returns them
+ * ordered by product id (API-02).
+ *
+ * Both properties matter, for different reasons. Merging: the stock check
+ * used to run per line, so a ticket carrying the same product twice could
+ * pass two checks of 3 units each against a stock of 5, then decrement to
+ * -1. Ordering: `FOR UPDATE` taken in whatever order the client sent meant
+ * two simultaneous sales of products {7, 12} and {12, 7} could each hold
+ * what the other was waiting for — a deadlock Postgres resolves by aborting
+ * one transaction with an error the cashier can do nothing about.
+ *
+ * Exported so the ordering guarantee can be asserted directly
+ * (tests/unit/checkout-items.test.ts). An integration test cannot prove it:
+ * reproducing a deadlock requires interleaving two transactions at an exact
+ * point, which the test suite has no hook to force.
+ *
+ * Notes from merged lines are joined so none is silently dropped.
+ */
+export function mergeItemsByProduct(items: CheckoutBody["items"]): MergedItem[] {
+  const merged = new Map<number, MergedItem>();
+
+  for (const item of items) {
+    const existing = merged.get(item.productId);
+    const note = item.notes?.trim() || null;
+    if (!existing) {
+      merged.set(item.productId, {
+        productId: item.productId,
+        quantity: item.quantity,
+        notes: note,
+      });
+      continue;
+    }
+    existing.quantity += item.quantity;
+    if (note) {
+      existing.notes = existing.notes ? `${existing.notes} — ${note}` : note;
+    }
+  }
+
+  return [...merged.values()].sort((left, right) => left.productId - right.productId);
+}
+
 /**
  * Ports the prototype's atomic checkout (lock products, decrement stock,
  * create the order, free the table, all in one transaction) into the new
@@ -35,19 +83,21 @@ export interface CheckoutResult {
  * payment-split behaviour and its known bug (`cardAmount || total`, audit
  * P0-02: a CASH sale is also recorded as CARD revenue) — the canonical,
  * server-validated `cash + card = total` computation is SALE-03 (phase 3).
- * What *is* fixed here, because it is squarely SEC-02/SEC-06/SEC-09 scope:
- * every lookup is scoped to context.locationId, the caller must be
- * authenticated with "orders:create", and the sale is written to the audit
- * log with its actor.
+ * What *is* fixed here: every lookup is scoped to context.locationId, the
+ * caller must hold "orders:create", the sale is audited with its actor
+ * (SEC-02/SEC-06/SEC-09), and lines are merged and locked in a deterministic
+ * order (API-02, see mergeItemsByProduct).
  */
 export async function performCheckout(
   context: RequestContext,
   input: CheckoutBody,
 ): Promise<CheckoutResult> {
-  // Input validation now happens at the route boundary against
+  // Input validation happens at the route boundary against
   // checkoutBodySchema (API-01), before this function — and therefore before
   // the database — is reached at all. `input` is the schema's output type,
   // so ids, quantities and amounts are already known-good here.
+  const mergedItems = mergeItemsByProduct(input.items);
+
   return withTransaction(async (client) => {
     let total = 0;
     const resolvedItems: {
@@ -57,7 +107,7 @@ export async function performCheckout(
       notes: string | null;
     }[] = [];
 
-    for (const item of input.items) {
+    for (const item of mergedItems) {
       const product = await lockActiveProductForCheckout(
         client,
         context.locationId,
@@ -75,7 +125,7 @@ export async function performCheckout(
         productId: item.productId,
         quantity: item.quantity,
         unitPrice,
-        notes: item.notes ?? null,
+        notes: item.notes,
       });
     }
 

@@ -445,17 +445,19 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ### Contrats et modèles fondamentaux
 
-- [ ] **`API-01` — Créer les schémas de validation partagés**
+- [x] **`API-01` — Créer les schémas de validation partagés**
   - Priorité : `P0`
   - Dépend de : `FND-07`, `SEC-05`, `DEC-05`, `DEC-06`
   - Livrable : validation des identifiants, quantités, montants, périodes, enums et réponses.
   - Acceptation : toute entrée invalide retourne une erreur métier stable avant l’accès base.
+  - Mise en œuvre : `lib/validation/` (primitives, schémas par endpoint, parsing) ; toutes les routes métier migrées ; `ValidationError` porte un détail par champ. Le test d’intégration compte les accès base pour prouver le « avant », et un contrôle statique interdit `readJsonBody` sans schéma.
 
-- [ ] **`API-02` — Ajouter idempotence et contrôle de concurrence**
+- [x] **`API-02` — Ajouter idempotence et contrôle de concurrence**
   - Priorité : `P0`
   - Dépend de : `API-01`, `OPS-01`
   - Livrable : clé d’idempotence pour les opérations financières, stockage, portée par établissement, unicité, TTL, stratégie de verrouillage et conflits.
   - Acceptation : un double clic ou retry réseau ne crée jamais deux encaissements ; une clé réutilisée avec un autre payload est refusée.
+  - Mise en œuvre : `migrations/0005_idempotency_keys.sql`, `lib/idempotency.ts`, en-tête `Idempotency-Key` obligatoire sur `POST /api/checkout` et `POST /api/cash-movements` ; fusion et tri des lignes avant verrouillage dans l’encaissement. Documenté dans [`docs/idempotence-et-concurrence.md`](./docs/idempotence-et-concurrence.md). L’UX « état incertain / récupération » reste à `SALE-08`.
 
 - [ ] **`ORD-01` — Migrer vers le cycle de vie canonique des commandes**
   - Priorité : `P0`

@@ -3,6 +3,7 @@ import { NotFoundError, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
 import { fromCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
+import { nextOrderNumber } from "../repositories/orders";
 import { decrementProductStock, lockActiveProductForCheckout } from "../repositories/products";
 import { setDiningTableStatus } from "../repositories/tables";
 import type { RequestContext } from "../context";
@@ -13,6 +14,7 @@ export type { PaymentMethod };
 
 export interface CheckoutOrderResult {
   id: number;
+  order_number: number;
   table_id: number | null;
   status: string;
   payment_method: PaymentMethod;
@@ -20,7 +22,7 @@ export interface CheckoutOrderResult {
   card_amount: number;
   total_amount: number;
   created_at: string;
-  closed_at: string;
+  paid_at: string;
 }
 
 export interface CheckoutResult {
@@ -87,6 +89,16 @@ export function mergeItemsByProduct(items: CheckoutBody["items"]): MergedItem[] 
  * caller must hold "orders:create", the sale is audited with its actor
  * (SEC-02/SEC-06/SEC-09), and lines are merged and locked in a deterministic
  * order (API-02, see mergeItemsByProduct).
+ *
+ * ORD-01: the order it creates is now `PAID` (not the old `COMPLETED`) with
+ * a real `order_number`/`created_by`. It still inserts straight into `PAID`
+ * rather than creating an `OPEN` row first and transitioning it — this was
+ * already true before ORD-01 (the prototype never had a persisted ticket
+ * either) and stays true here; DEC-03's `OPEN -> PAID` step only becomes
+ * real once ORD-02 gives orders a persisted `OPEN` state to be created in.
+ * `subtotal_amount`/`tax_amount` are left NULL: this function does not
+ * compute tax, so writing a number would be a fabricated fiscal snapshot
+ * (FND-14) — SALE-03 is what populates them for real.
  */
 export async function performCheckout(
   context: RequestContext,
@@ -143,16 +155,24 @@ export async function performCheckout(
     const cashAmount = fromCents(input.cashAmountCents);
     const cardAmount = input.cardAmountCents > 0 ? fromCents(input.cardAmountCents) : total;
 
+    // Consumed inside this same transaction: if the checkout later rolls
+    // back (e.g. the stock check above already threw), the number is never
+    // committed to an order and the counter simply has a gap, which
+    // nextOrderNumber's own doc comment explains is an accepted trade-off.
+    const orderNumber = await nextOrderNumber(client, context.locationId);
+
     const {
       rows: [order],
     } = await client.query<CheckoutOrderResult>(
-      `INSERT INTO orders (location_id, table_id, business_day_id, status, payment_method, cash_amount, card_amount, total_amount, closed_at)
-       VALUES ($1, $2, $3, 'COMPLETED', $4, $5, $6, $7, now())
-       RETURNING id, table_id, status, payment_method, cash_amount, card_amount, total_amount, created_at, closed_at`,
+      `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, total_amount, paid_at)
+       VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, now())
+       RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, total_amount, created_at, paid_at`,
       [
         context.locationId,
         input.tableId,
         businessDay.id,
+        orderNumber,
+        context.userId,
         input.paymentMethod,
         cashAmount,
         cardAmount,

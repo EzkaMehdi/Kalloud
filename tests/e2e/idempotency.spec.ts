@@ -30,7 +30,16 @@ async function loginAsOwner(request: APIRequestContext) {
   expect(response.ok(), "the seeded owner must be able to log in").toBeTruthy();
 }
 
-test.describe("API-02: idempotent checkout over HTTP", () => {
+// ORD-01: these tests all read/write /api/orders and /api/checkout against
+// the one shared seeded tenant (owner@kalloud.test), asserting on the raw
+// before/after order count. Under Playwright's default fullyParallel mode
+// that made them race each other — one test's checkout could land between
+// another's "before" and "after" reads, so the count that "should" be +1
+// came out +2 or +3 depending on scheduling (non-deterministic: which test
+// failed changed between runs). .serial() removes the ambiguity these
+// specific assertions have no way to survive, without changing what any of
+// them actually tests.
+test.describe.serial("API-02: idempotent checkout over HTTP", () => {
   test("a double-clicked payment creates exactly one sale", async ({ request }) => {
     await loginAsOwner(request);
 

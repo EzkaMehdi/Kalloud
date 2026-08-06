@@ -74,7 +74,7 @@ export async function getCashBalance(
           FROM cash_movements WHERE location_id = $1 AND business_day_id = $2),
          0
        ) + COALESCE(
-         (SELECT SUM(cash_amount) FROM orders WHERE status = 'COMPLETED' AND location_id = $1 AND business_day_id = $2),
+         (SELECT SUM(cash_amount) FROM orders WHERE status = 'PAID' AND location_id = $1 AND business_day_id = $2),
          0
        )
      )::DECIMAL(10, 2) AS balance`,

@@ -42,7 +42,7 @@ export async function getBusinessDaySummary(
             COUNT(*)::INT AS orders_count,
             COALESCE(AVG(total_amount), 0)::DECIMAL(10, 2) AS average_basket
      FROM orders
-     WHERE status = 'COMPLETED' AND location_id = $1 AND business_day_id = $2`,
+     WHERE status = 'PAID' AND location_id = $1 AND business_day_id = $2`,
     [locationId, businessDayId],
   );
   return rows[0];
@@ -61,7 +61,7 @@ export async function getRevenueBetween(
             COUNT(*)::INT AS orders_count,
             COALESCE(AVG(total_amount), 0)::DECIMAL(10, 2) AS average_basket
      FROM orders
-     WHERE status = 'COMPLETED' AND location_id = $1 AND closed_at >= $2 AND closed_at < $3`,
+     WHERE status = 'PAID' AND location_id = $1 AND paid_at >= $2 AND paid_at < $3`,
     [locationId, from, to],
   );
   return rows[0];

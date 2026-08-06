@@ -15,6 +15,7 @@ const TABLES_IN_SAFE_TRUNCATE_ORDER = [
   "sessions",
   "order_items",
   "orders",
+  "order_number_counters",
   "cash_movements",
   "business_days",
   "dining_tables",

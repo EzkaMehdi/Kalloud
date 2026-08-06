@@ -190,6 +190,11 @@ export const closeBusinessDaySchema = z.strictObject({
 });
 export type CloseBusinessDayBody = z.infer<typeof closeBusinessDaySchema>;
 
+export const openBusinessDaySchema = z.strictObject({
+  openingCash: moneyAmountSchema.optional(),
+});
+export type OpenBusinessDayBody = z.infer<typeof openBusinessDaySchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Reporting                                                                  */
 /* -------------------------------------------------------------------------- */

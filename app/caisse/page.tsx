@@ -155,6 +155,10 @@ export default function Caisse() {
           <h2>Plan de salle</h2>
           <p className="eyebrow">Touchez une table pour prendre la commande</p>
         </div>
+        {/* TODO(CASH-02/CASH-07): hardcoded regardless of the real business
+            day state — GET /api/cash-summary now exposes `businessDayOpen`
+            (CASH-01) precisely so this can stop lying once the caisse
+            screen's open/close flow is wired to it. */}
         <span className="status">
           <span className="dot" aria-hidden="true" />
           Service ouvert

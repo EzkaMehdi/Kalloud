@@ -14,6 +14,7 @@ const TABLES_IN_SAFE_TRUNCATE_ORDER = [
   "password_reset_tokens",
   "sessions",
   "order_items",
+  "payments",
   "orders",
   "order_number_counters",
   "cash_movements",

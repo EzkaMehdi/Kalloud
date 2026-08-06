@@ -151,6 +151,35 @@ export async function lockActiveProductForCheckout(
 }
 
 /**
+ * STK-03: same lock, same is_active filter as lockActiveProductForCheckout
+ * above — but that function belongs to checkout.ts's own known-prototype
+ * flow (TODO(SALE-03) on decrementProductStock explains why it stays
+ * untouched) and its name says so. This is the equivalent for
+ * lib/services/stock.ts's general-purpose decrement service, so a reader
+ * doesn't have to wonder whether reusing "ForCheckout" here means the two
+ * are secretly coupled — they are not.
+ */
+export async function lockActiveProductForStockOperation(
+  db: Queryable,
+  locationId: number,
+  productId: number,
+): Promise<LockedProduct | null> {
+  const { rows } = await db.query<{
+    id: number;
+    name: string;
+    price: string;
+    stock_quantity: number;
+  }>(
+    "SELECT id, name, price, stock_quantity FROM products WHERE id = $1 AND location_id = $2 AND is_active = true FOR UPDATE",
+    [productId, locationId],
+  );
+  const row = rows[0];
+  return row
+    ? { id: row.id, name: row.name, price: row.price, stockQuantity: row.stock_quantity }
+    : null;
+}
+
+/**
  * TODO(SALE-03): called only by checkout.ts's known-prototype payment flow
  * (see that module's own doc comment on P0-02). It updates
  * `products.stock_quantity` without writing a matching `stock_movements`

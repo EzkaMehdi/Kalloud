@@ -4,7 +4,8 @@ import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
 import { apiRoute, jsonOk } from "@/lib/http";
 import { fromCents } from "@/lib/money";
-import { createProduct, listProducts } from "@/lib/repositories/products";
+import { listProducts } from "@/lib/repositories/products";
+import { createProductWithInitialStock } from "@/lib/services/products";
 import { parseJsonBody } from "@/lib/validation/parse";
 import { createProductSchema } from "@/lib/validation/schemas";
 
@@ -23,7 +24,10 @@ export const POST = apiRoute(async (request: NextRequest) => {
   // enforces DEC-05's "2 décimales exactes" on the price — the rule that
   // rejects a 4,995 € product before it can ever be sold at a rounded price.
   const body = await parseJsonBody(request, createProductSchema);
-  const product = await createProduct(pool, context.locationId, {
+  // STK-02: a non-zero starting stock is recorded as a real OPENING_BALANCE
+  // movement, not just written to the materialized column — see
+  // lib/services/products.ts for why.
+  const product = await createProductWithInitialStock(context, {
     categoryId: body.categoryId ?? null,
     name: body.name,
     price: fromCents(body.price),

@@ -150,6 +150,16 @@ export async function lockActiveProductForCheckout(
     : null;
 }
 
+/**
+ * TODO(SALE-03): called only by checkout.ts's known-prototype payment flow
+ * (see that module's own doc comment on P0-02). It updates
+ * `products.stock_quantity` without writing a matching `stock_movements`
+ * row, so `stock_quantity == SUM(stock_movements.quantity)` (DEC-06,
+ * STK-01) does not hold for a product sold through it — a gap DEC-06 itself
+ * assigns to SALE-03 ("SALE" movement trigger), not STK-01/STK-03. This
+ * function must not gain new callers before SALE-03 replaces it with
+ * lib/repositories/stock-movements.ts::recordStockMovement.
+ */
 export async function decrementProductStock(
   db: Queryable,
   locationId: number,

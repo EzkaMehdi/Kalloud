@@ -19,6 +19,7 @@ const TABLES_IN_SAFE_TRUNCATE_ORDER = [
   "cash_movements",
   "business_days",
   "dining_tables",
+  "stock_movements",
   "products",
   "categories",
   "tax_classes",

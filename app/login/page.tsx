@@ -47,7 +47,7 @@ function LoginForm() {
           <span className="brand-mark">
             <Coffee size={18} />
           </span>
-          Kalloud
+          Samppli
         </div>
         <h1 className="auth-title">Connexion</h1>
         <p className="auth-subtitle">Connectez-vous pour accéder à votre établissement</p>

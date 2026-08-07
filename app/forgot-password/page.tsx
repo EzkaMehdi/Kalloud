@@ -45,7 +45,7 @@ export default function ForgotPasswordPage() {
           <span className="brand-mark">
             <Coffee size={18} />
           </span>
-          Kalloud
+          Samppli
         </div>
         <h1 className="auth-title">Mot de passe oublié</h1>
         <p className="auth-subtitle">Recevez un lien pour réinitialiser votre mot de passe</p>

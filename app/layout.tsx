@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Kalloud — Gestion de salle",
+  title: "Samppli — Gestion de salle",
   description: "Caisse, stock et activité",
 };
 

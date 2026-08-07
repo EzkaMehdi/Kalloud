@@ -38,7 +38,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <span className="brand-mark">
             <Coffee size={18} />
           </span>
-          Kalloud
+          Samppli
         </div>
         {user && (
           <div className="user-menu">

@@ -53,7 +53,7 @@ function ResetPasswordForm() {
           <span className="brand-mark">
             <Coffee size={18} />
           </span>
-          Kalloud
+          Samppli
         </div>
         <h1 className="auth-title">Nouveau mot de passe</h1>
         <p className="auth-subtitle">Choisissez un nouveau mot de passe</p>

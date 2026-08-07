@@ -3,28 +3,26 @@
 import { Minus, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
+import { AsyncSection } from "@/components/ui/async-section";
 import { ApiError, apiFetch } from "@/lib/client/api";
+import { useAsyncData } from "@/lib/client/use-async-data";
 
 /**
- * TODO(SALE-01, SALE-04 — phase 3): this catalog is a local constant, not
- * the real, scoped product list from /api/products, and its ids do not
- * reliably match the seeded catalog (audit finding P0-03). Loading the real
- * catalog here — so the product shown, the price charged and the stock
- * decremented are always the same row — is exactly SALE-04's job. Left
- * as-is for phase 1/2, which only had to make the *checkout call itself*
- * authenticated and location-scoped (SEC-03/SEC-04/SEC-06), not rebuild the
- * sales UI's data source.
+ * SALE-01's catalog shape, narrowed to what this drawer actually reads.
+ * Field names mirror the API response verbatim (snake_case, `price` as the
+ * `DECIMAL` string Postgres stores) rather than importing
+ * lib/repositories/products.ts's server-side type — same boundary
+ * app/stock/page.tsx already draws, so a client component never pulls in a
+ * module that talks to the database.
  */
-const products = [
-  { id: 1, name: "Chicha Signature", price: 25, cat: "Chichas" },
-  { id: 2, name: "Chicha Classique", price: 20, cat: "Chichas" },
-  { id: 3, name: "Thé à la menthe", price: 4, cat: "Boissons" },
-  { id: 4, name: "Mojito passion", price: 8, cat: "Boissons" },
-  { id: 7, name: "Café latte", price: 5, cat: "Boissons" },
-  { id: 5, name: "Brunch Kalloud", price: 19, cat: "Plats" },
-  { id: 6, name: "Tiramisu maison", price: 7, cat: "Desserts" },
-];
-const cats = ["Tout", "Chichas", "Boissons", "Plats", "Desserts"];
+interface CatalogProduct {
+  id: number;
+  name: string;
+  price: string;
+  category: string | null;
+}
+
+const ALL_CATEGORIES = "Tout";
 
 /**
  * TODO(SALE-05, phase 3): "Mixte" is deliberately absent. It used to be
@@ -52,7 +50,7 @@ export function OrderDrawer({
   onClose: () => void;
   onComplete: (total: number) => void;
 }) {
-  const [category, setCategory] = useState("Tout");
+  const [category, setCategory] = useState(ALL_CATEGORIES);
   const [items, setItems] = useState<Item[]>([]);
   const [payment, setPayment] = useState<(typeof paymentOptions)[number]["value"]>("CB");
   const [saving, setSaving] = useState(false);
@@ -68,20 +66,40 @@ export function OrderDrawer({
    */
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
-  const filtered = products.filter((p) => category === "Tout" || p.cat === category);
+  // SALE-01/SALE-04: the same scoped, real catalog the stock screen reads —
+  // no separate constant that could drift from it (P0-03: the old local
+  // catalog's ids didn't reliably match the seeded one at all).
+  const productsQuery = useAsyncData(() => apiFetch<CatalogProduct[]>("/api/products"), []);
+
+  // SALE-07 (later) is what makes an inactive/out-of-stock product visible
+  // but non-addable; for now every product SALE-01 returns is shown and
+  // addable, and checkout.ts (SALE-03) already refuses one that turns out
+  // to be inactive or under-stocked when the sale is actually attempted.
+  const categories = useMemo(() => {
+    if (productsQuery.state.status !== "success") return [ALL_CATEGORIES];
+    const names = new Set(
+      productsQuery.state.data.map((product) => product.category).filter((name) => name !== null),
+    );
+    return [ALL_CATEGORIES, ...names];
+  }, [productsQuery.state]);
+
   const total = useMemo(
     () => items.reduce((sum, item) => sum + item.price * item.quantity, 0),
     [items],
   );
 
-  function add(product: { id: number; name: string; price: number }) {
+  function add(product: CatalogProduct) {
     setItems((old) => {
       const existing = old.find((item) => item.id === product.id);
-      return existing
-        ? old.map((item) =>
-            item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
-          )
-        : [...old, { ...product, quantity: 1 }];
+      if (existing) {
+        return old.map((item) =>
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
+        );
+      }
+      return [
+        ...old,
+        { id: product.id, name: product.name, price: Number(product.price), quantity: 1 },
+      ];
     });
   }
 
@@ -132,7 +150,7 @@ export function OrderDrawer({
   return (
     <Dialog title={table} eyebrow="Nouvelle commande" onClose={onClose}>
       <div className="product-cats" role="tablist" aria-label="Catégories de produits">
-        {cats.map((cat) => (
+        {categories.map((cat) => (
           <button
             key={cat}
             role="tab"
@@ -144,14 +162,25 @@ export function OrderDrawer({
           </button>
         ))}
       </div>
-      <div className="products">
-        {filtered.map((product) => (
-          <button onClick={() => add(product)} className="product" key={product.id}>
-            <b>{product.name}</b>
-            <span>{product.price.toFixed(2)} €</span>
-          </button>
-        ))}
-      </div>
+      <AsyncSection
+        state={productsQuery.state}
+        onRetry={productsQuery.refetch}
+        isEmpty={(data) => data.length === 0}
+        emptyMessage="Aucun produit configuré pour cet établissement."
+      >
+        {(products) => (
+          <div className="products">
+            {products
+              .filter((product) => category === ALL_CATEGORIES || product.category === category)
+              .map((product) => (
+                <button onClick={() => add(product)} className="product" key={product.id}>
+                  <b>{product.name}</b>
+                  <span>{Number(product.price).toFixed(2)} €</span>
+                </button>
+              ))}
+          </div>
+        )}
+      </AsyncSection>
       <div className="ticket">
         <h2>Articles sélectionnés</h2>
         {items.length === 0 ? (

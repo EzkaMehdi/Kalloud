@@ -517,11 +517,12 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ### Interface d’encaissement
 
-- [ ] **`SALE-04` — Charger le catalogue réel dans le ticket**
+- [x] **`SALE-04` — Charger le catalogue réel dans le ticket**
   - Priorité : `P0`
   - Dépend de : `SALE-01`, `UX-01`
   - Livrable : suppression des constantes produits et des IDs locaux.
   - Acceptation : produit affiché, prix utilisé et produit déstocké sont identiques.
+  - Mise en œuvre : `components/order-drawer.tsx` — le catalogue codé en dur (7 produits, IDs sans rapport garanti avec le seed réel, `P0-03`) et sa liste de catégories séparée sont supprimés, remplacés par `useAsyncData(() => apiFetch<CatalogProduct[]>("/api/products"))` + `AsyncSection` (même pattern déjà établi par `UX-01` dans `app/stock/page.tsx`/`app/caisse/page.tsx`, pas une nouvelle façon de faire). Les catégories sont désormais dérivées des valeurs réelles du catalogue (plus de liste séparée qui pourrait diverger silencieusement). Aucun filtre sur `is_active`/`is_available` : tout le catalogue reste affichable et ajoutable — `SALE-07` (plus tard, dépend explicitement de `SALE-04`) est la tâche qui rendra un produit indisponible visible mais non ajoutable ; filtrer dès maintenant aurait obligé `SALE-07` à défaire une décision prise ici. `checkout.ts` (`SALE-03`) refuse déjà proprement un produit inactif ou en rupture au moment de l'encaissement. Testé par `tests/e2e/sale-catalog.spec.ts` (nouveau) : ouvre une table, clique un produit du **vrai** catalogue (créé par le test lui-même via l'API pour rester isolé des autres specs e2e qui vendent dans le catalogue seedé partagé — la même classe de course que celle déjà rencontrée et corrigée dans `idempotency.spec.ts`, ici entre fichiers plutôt qu'au sein d'un seul), vérifie que le nom et le prix affichés dans le ticket correspondent à cette ligne précise, encaisse, et confirme que c'est le stock de **ce même** produit qui a été décrémenté d'exactement une unité — preuve directe de l'acceptation, pas seulement du fait que l'appel HTTP réussit.
 
 - [ ] **`SALE-05` — Implémenter espèces, carte et mixte**
   - Priorité : `P0`

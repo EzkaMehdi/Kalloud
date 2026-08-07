@@ -4,6 +4,7 @@ import { Minus, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { AsyncSection } from "@/components/ui/async-section";
+import { TextField } from "@/components/ui/text-field";
 import { ApiError, apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 
@@ -25,16 +26,17 @@ interface CatalogProduct {
 const ALL_CATEGORIES = "Tout";
 
 /**
- * TODO(SALE-05, phase 3): "Mixte" is deliberately absent. It used to be
- * offered here and sent `MIXED` with both amounts at zero, which the server
- * then recorded as a full card payment (audit finding P0-02) — a payment
- * mode that looked supported and silently falsified the cash journal.
- * API-01's checkout schema now refuses that payload outright, and SALE-05
- * adds the real split input that will bring the option back.
+ * SALE-05: "Mixte" used to send `MIXED` with both amounts at zero, which the
+ * server recorded as a full card payment (audit finding P0-02) — a mode
+ * that looked supported and silently falsified the cash journal. It is back
+ * now that there is a real split input (below) and a server that verifies
+ * the two amounts actually sum to the total (SALE-03) instead of trusting
+ * whatever the client sent.
  */
 const paymentOptions = [
   { value: "CB", label: "CB" },
   { value: "Espèces", label: "Espèces" },
+  { value: "Mixte", label: "Mixte" },
 ] as const;
 
 type Item = { id: number; name: string; price: number; quantity: number };
@@ -53,6 +55,12 @@ export function OrderDrawer({
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [items, setItems] = useState<Item[]>([]);
   const [payment, setPayment] = useState<(typeof paymentOptions)[number]["value"]>("CB");
+  // SALE-05: only meaningful when payment === "Mixte" — CB/Espèces derive
+  // their amount entirely from the server-computed total (SALE-03 ignores
+  // whatever a client sends for those two methods), so there is nothing for
+  // the cashier to type for them.
+  const [cashSplit, setCashSplit] = useState("");
+  const [cardSplit, setCardSplit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   /**
@@ -116,24 +124,54 @@ export function OrderDrawer({
   }
 
   async function checkout() {
-    setSaving(true);
     setError("");
+
+    let paymentMethod: "CASH" | "CARD" | "MIXED";
+    let cashAmount: string | undefined;
+    let cardAmount: string | undefined;
+
+    if (payment === "Mixte") {
+      paymentMethod = "MIXED";
+      const cash = Number(cashSplit);
+      const card = Number(cardSplit);
+      // UX-05: caught here, inline, before a network round-trip — not
+      // because the server's own check (SALE-03) is any less final, but so
+      // a typo shows up immediately next to the two fields instead of after
+      // a request the server was always going to refuse anyway. Compared
+      // in cents: 0.1 + 0.2 !== 0.3 in binary floating point, and DEC-05's
+      // rule has no tolerance for that kind of near-miss.
+      if (!cash || !card || cash <= 0 || card <= 0) {
+        setError("Indiquez un montant espèces et un montant carte, tous deux supérieurs à zéro.");
+        return;
+      }
+      if (Math.round(cash * 100) + Math.round(card * 100) !== Math.round(total * 100)) {
+        setError(`La somme des deux montants doit être égale au total (${total.toFixed(2)} €).`);
+        return;
+      }
+      cashAmount = cash.toFixed(2);
+      cardAmount = card.toFixed(2);
+    } else {
+      paymentMethod = payment === "CB" ? "CARD" : "CASH";
+    }
+
+    setSaving(true);
     try {
-      const method = payment === "CB" ? "CARD" : "CASH";
-      // Amounts go out as fixed 2-decimal strings: summing prices in
-      // JavaScript can yield 9.989999999999998, which the server's money
-      // schema rightly refuses (DEC-05). SALE-06 removes the question
-      // entirely by taking the total from the server's response.
-      const amount = total.toFixed(2);
+      // TODO(SALE-06): onComplete still gets the client-side sum below, not
+      // the server's own total_amount from this response — this call's
+      // result is otherwise discarded. Using it is exactly what SALE-06
+      // is about ("aucune incrémentation financière calculée uniquement
+      // côté client"); left as the client sum here so this change stays
+      // about adding the MIXED split, not about that separate acceptance
+      // criterion.
       await apiFetch("/api/checkout", {
         method: "POST",
         idempotencyKey,
         body: JSON.stringify({
           tableId,
           items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
-          paymentMethod: method,
-          cashAmount: method === "CASH" ? amount : "0.00",
-          cardAmount: method === "CARD" ? amount : "0.00",
+          paymentMethod,
+          ...(cashAmount ? { cashAmount } : {}),
+          ...(cardAmount ? { cardAmount } : {}),
         }),
       });
       // The sale is recorded; the next one is a different operation and
@@ -228,6 +266,30 @@ export function OrderDrawer({
           </button>
         ))}
       </div>
+      {payment === "Mixte" && (
+        <div className="split-amounts">
+          <TextField
+            label="Espèces (€)"
+            inputMode="decimal"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={cashSplit}
+            onChange={(event) => setCashSplit(event.target.value)}
+            placeholder="Ex. 10,00"
+          />
+          <TextField
+            label="Carte (€)"
+            inputMode="decimal"
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={cardSplit}
+            onChange={(event) => setCardSplit(event.target.value)}
+            placeholder="Ex. 5,00"
+          />
+        </div>
+      )}
       {error && (
         <p className="form-error" role="alert">
           {error}

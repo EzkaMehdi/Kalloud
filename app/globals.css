@@ -628,6 +628,12 @@ dialog.sheet::backdrop {
   border-color: #b6d5be;
   color: var(--forest);
 }
+.split-amounts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
 .stock-card,
 .history-card {
   background: white;

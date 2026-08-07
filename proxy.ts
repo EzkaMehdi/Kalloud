@@ -18,6 +18,18 @@ import { isRateLimited } from "@/lib/security/rate-limit";
 const PROTECTED_PAGE_PREFIXES = ["/caisse", "/stock", "/bilan"];
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const MAX_REQUEST_BODY_BYTES = 1_000_000; // 1MB hard ceiling; routes enforce a tighter limit for their own payloads.
+/**
+ * SEC-07's real anti-abuse posture — a genuine attacker never gets more
+ * than this many `/api/auth/*` requests a minute from one address. Reading
+ * it from AUTH_RATE_LIMIT_MAX (only set in playwright.config.ts's
+ * webServer.env) lets the growing e2e suite raise its own ceiling without
+ * touching production's default: every real client — dev, CI's actual app
+ * traffic, deployed instances — still gets exactly 30. useCurrentUser()
+ * calling /api/auth/session on every protected page mount means a full e2e
+ * run's request count scales with the number of *tests*, not attacker
+ * intent, so the suite needs a different budget than a real client does.
+ */
+const AUTH_RATE_LIMIT_MAX = Number(process.env.AUTH_RATE_LIMIT_MAX ?? 30);
 
 function withSecurityHeaders(response: NextResponse, request: NextRequest): NextResponse {
   const scriptSrc =
@@ -101,7 +113,7 @@ export function proxy(request: NextRequest): NextResponse {
       const ip = forwardedFor
         ? forwardedFor.split(",")[0]?.trim()
         : (request.headers.get("x-real-ip") ?? "unknown");
-      const limited = isRateLimited(`auth:${ip}`, { windowMs: 60_000, max: 30 });
+      const limited = isRateLimited(`auth:${ip}`, { windowMs: 60_000, max: AUTH_RATE_LIMIT_MAX });
       if (limited) {
         return withSecurityHeaders(
           jsonError(429, "TOO_MANY_REQUESTS", "Trop de requêtes. Réessayez dans un instant."),

@@ -156,14 +156,13 @@ export function OrderDrawer({
 
     setSaving(true);
     try {
-      // TODO(SALE-06): onComplete still gets the client-side sum below, not
-      // the server's own total_amount from this response — this call's
-      // result is otherwise discarded. Using it is exactly what SALE-06
-      // is about ("aucune incrémentation financière calculée uniquement
-      // côté client"); left as the client sum here so this change stays
-      // about adding the MIXED split, not about that separate acceptance
-      // criterion.
-      await apiFetch("/api/checkout", {
+      // SALE-06: the total this drawer reports is the server's own
+      // total_amount from this response, not `total` (the client's sum of
+      // catalog prices it already had). They usually agree, but "usually"
+      // is exactly the gap DEC-05/SALE-03 close server-side — the display
+      // should not independently recompute a number the server already
+      // settled, even one that would normally match.
+      const result = await apiFetch<{ order: { total_amount: string } }>("/api/checkout", {
         method: "POST",
         idempotencyKey,
         body: JSON.stringify({
@@ -177,7 +176,7 @@ export function OrderDrawer({
       // The sale is recorded; the next one is a different operation and
       // must not reuse this key.
       setIdempotencyKey(crypto.randomUUID());
-      onComplete(total);
+      onComplete(Number(result.order.total_amount));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
     } finally {

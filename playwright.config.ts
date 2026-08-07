@@ -43,6 +43,15 @@ export default defineConfig({
     timeout: 120_000,
     env: {
       PORT: String(PORT),
+      // SEC-07's proxy.ts rate-limits /api/auth/* to 30 req/min per IP by
+      // default — a real client's ceiling. useCurrentUser() calling
+      // /api/auth/session on every protected page mount means this whole
+      // suite's own request count scales with test count, not attacker
+      // behaviour, and Playwright's requests share one bucket locally
+      // (no x-forwarded-for, so proxy.ts's `ip` resolves to the same
+      // "unknown" for every test). Raised only for this dedicated e2e
+      // server process — dev and production keep the real default.
+      AUTH_RATE_LIMIT_MAX: "1000",
     },
   },
 });

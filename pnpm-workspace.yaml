@@ -2,3 +2,12 @@ allowBuilds:
   unrs-resolver: false
 onlyBuiltDependencies:
   - unrs-resolver
+# GHSA-2v37-7h3g-55p8: nanoid <3.3.17 can loop indefinitely in a custom
+# generator called with size 0. Not called that way anywhere in this
+# app's own code — pulled in transitively, twice independently, by
+# postcss (via next and via vite/vitest), each resolving its own copy.
+# `pnpm update nanoid` alone only bumped one of the two; this forces
+# every resolution to the patched version regardless of which parent
+# declared it.
+overrides:
+  nanoid: ">=3.3.17"

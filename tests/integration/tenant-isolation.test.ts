@@ -6,7 +6,7 @@ import { listCategories } from "../../lib/repositories/categories";
 import {
   createProduct,
   listProducts,
-  lockActiveProductForCheckout,
+  lockProductsForSale,
   overwriteProductStockQuantity,
   updateProduct,
 } from "../../lib/repositories/products";
@@ -117,7 +117,7 @@ describe("SEC-08: catalog isolation", () => {
     expect(untouched.find((p) => p.id === productB.id)?.stock_quantity).toBe(5);
   });
 
-  it("cannot lock another tenant's product for checkout (the row simply is not visible)", async () => {
+  it("cannot lock another tenant's product for a sale (the row simply is not visible)", async () => {
     const productB = await createProduct(pool, tenantB.locationId, {
       categoryId: null,
       name: "Tenant B Checkout Target",
@@ -125,8 +125,8 @@ describe("SEC-08: catalog isolation", () => {
       stockQuantity: 5,
     });
 
-    const locked = await lockActiveProductForCheckout(pool, tenantA.locationId, productB.id);
-    expect(locked).toBeNull();
+    const locked = await lockProductsForSale(pool, tenantA.locationId, [productB.id]);
+    expect(locked).toHaveLength(0);
   });
 });
 

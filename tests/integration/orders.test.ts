@@ -74,10 +74,14 @@ describe("ORD-01: canonical order lifecycle", () => {
     expect(order.paid_at).not.toBeNull();
     expect(order.cancelled_at).toBeNull();
     expect(order.refunded_at).toBeNull();
-    // Not SALE-03 yet: checkout does not compute tax, so it must not invent
-    // a number that would look like a real fiscal snapshot (FND-14).
-    expect(order.subtotal_amount).toBeNull();
-    expect(order.tax_amount).toBeNull();
+    // SALE-03: a real fiscal snapshot now, not a fabricated one — 15.00 €
+    // TTC at the establishment's default 20% rate (location_settings,
+    // migrations/0002) is 12.50 € HT + 2.50 € tax, per DEC-05's extraction
+    // formula (see tests/integration/checkout-tax.test.ts for the full
+    // proof of that computation; this test only needs to confirm the order
+    // row actually carries it).
+    expect(order.subtotal_amount).toBe("12.50");
+    expect(order.tax_amount).toBe("2.50");
   });
 
   it("gives every order in a location a distinct, increasing number, starting at 1", async () => {
@@ -124,7 +128,7 @@ describe("ORD-01: canonical order lifecycle", () => {
     });
 
     // Different products so the two transactions do not already serialise
-    // on lockActiveProductForCheckout's FOR UPDATE — this isolates the
+    // on lockProductsForSale's FOR UPDATE — this isolates the
     // order_number_counters upsert itself as what prevents the collision,
     // per its doc comment in lib/repositories/orders.ts.
     const [resultA, resultB] = await Promise.all([

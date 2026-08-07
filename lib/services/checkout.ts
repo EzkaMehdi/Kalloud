@@ -1,11 +1,13 @@
 import { withTransaction } from "../db";
 import { NotFoundError, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
-import { fromCents } from "../money";
+import { extractTaxCents, fromCents, toCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
 import { nextOrderNumber } from "../repositories/orders";
-import { decrementProductStock, lockActiveProductForCheckout } from "../repositories/products";
+import { recordCharge } from "../repositories/payments";
+import { lockProductsForSale } from "../repositories/products";
 import { setDiningTableStatus } from "../repositories/tables";
+import { decrementStockAtomically } from "./stock";
 import type { RequestContext } from "../context";
 import type { PaymentMethod } from "../validation/primitives";
 import type { CheckoutBody } from "../validation/schemas";
@@ -20,6 +22,8 @@ export interface CheckoutOrderResult {
   payment_method: PaymentMethod;
   cash_amount: number;
   card_amount: number;
+  subtotal_amount: number;
+  tax_amount: number;
   total_amount: number;
   created_at: string;
   paid_at: string;
@@ -79,26 +83,51 @@ export function mergeItemsByProduct(items: CheckoutBody["items"]): MergedItem[] 
 }
 
 /**
- * Ports the prototype's atomic checkout (lock products, decrement stock,
- * create the order, free the table, all in one transaction) into the new
- * authenticated/scoped architecture. It intentionally keeps the original
- * payment-split behaviour and its known bug (`cardAmount || total`, audit
- * P0-02: a CASH sale is also recorded as CARD revenue) — the canonical,
- * server-validated `cash + card = total` computation is SALE-03 (phase 3).
- * What *is* fixed here: every lookup is scoped to context.locationId, the
- * caller must hold "orders:create", the sale is audited with its actor
- * (SEC-02/SEC-06/SEC-09), and lines are merged and locked in a deterministic
- * order (API-02, see mergeItemsByProduct).
+ * DEC-05's amounts-per-method rule, computed once the real total is known
+ * (the schema cannot do this — it validates the *shape* of a request before
+ * the catalog is ever consulted, see checkoutBodySchema's own doc comment).
+ * For CASH/CARD the client's cashAmountCents/cardAmountCents are ignored
+ * entirely — the whole point of "calcul uniquement côté serveur" is that
+ * nothing the client sent decides the charged amount when there is only one
+ * possible correct value. For MIXED, the client's split is the input (a
+ * real decision — how much cash was actually handed over), verified against
+ * the computed total rather than trusted blindly.
+ */
+function resolvePaymentSplit(
+  paymentMethod: PaymentMethod,
+  totalCents: number,
+  input: Pick<CheckoutBody, "cashAmountCents" | "cardAmountCents">,
+): { cashCents: number; cardCents: number } {
+  if (paymentMethod === "CASH") {
+    return { cashCents: totalCents, cardCents: 0 };
+  }
+  if (paymentMethod === "CARD") {
+    return { cashCents: 0, cardCents: totalCents };
+  }
+  // MIXED: checkoutBodySchema already refused a zero cash or card side; what
+  // it could not check is whether the two actually add up to this order's
+  // real total.
+  const { cashAmountCents, cardAmountCents } = input;
+  if (cashAmountCents + cardAmountCents !== totalCents) {
+    throw new ValidationError(
+      "La somme des montants espèces et carte ne correspond pas au total de la commande.",
+    );
+  }
+  return { cashCents: cashAmountCents, cardCents: cardAmountCents };
+}
+
+/**
+ * SALE-03: the canonical, server-computed checkout — subtotal, tax, total,
+ * payments and stock movements, all in one transaction. Replaces the
+ * prototype flow this module carried since FND-08/API-02, and with it
+ * P0-02 (a CASH sale recorded as CARD revenue too): `resolvePaymentSplit`
+ * has no fallback branch, every payment method resolves to exactly one
+ * pair of amounts.
  *
- * ORD-01: the order it creates is now `PAID` (not the old `COMPLETED`) with
- * a real `order_number`/`created_by`. It still inserts straight into `PAID`
- * rather than creating an `OPEN` row first and transitioning it — this was
- * already true before ORD-01 (the prototype never had a persisted ticket
- * either) and stays true here; DEC-03's `OPEN -> PAID` step only becomes
- * real once ORD-02 gives orders a persisted `OPEN` state to be created in.
- * `subtotal_amount`/`tax_amount` are left NULL: this function does not
- * compute tax, so writing a number would be a fabricated fiscal snapshot
- * (FND-14) — SALE-03 is what populates them for real.
+ * Still creates the order directly as `PAID`, with no persisted `OPEN`
+ * step — true since before ORD-01 (see that task's note in git history),
+ * unchanged here; ORD-02 is what gives orders a real `OPEN` state to pass
+ * through first.
  */
 export async function performCheckout(
   context: RequestContext,
@@ -111,52 +140,50 @@ export async function performCheckout(
   const mergedItems = mergeItemsByProduct(input.items);
 
   return withTransaction(async (client) => {
-    let total = 0;
+    const productIds = mergedItems.map((item) => item.productId);
+    const pricing = await lockProductsForSale(client, context.locationId, productIds);
+    const pricingById = new Map(pricing.map((row) => [row.id, row]));
+
+    let totalCents = 0;
+    let taxCents = 0;
     const resolvedItems: {
       productId: number;
       quantity: number;
-      unitPrice: number;
+      unitPriceCents: number;
       notes: string | null;
     }[] = [];
 
     for (const item of mergedItems) {
-      const product = await lockActiveProductForCheckout(
-        client,
-        context.locationId,
-        item.productId,
-      );
+      const product = pricingById.get(item.productId);
       if (!product) {
+        // Not found and inactive are indistinguishable here on purpose —
+        // lockProductsForSale filters on is_active too, same as the
+        // prototype's lock did, so a missing id could be either.
         throw new NotFoundError("Produit introuvable.");
       }
-      if (product.stockQuantity < item.quantity) {
-        throw new ValidationError(`Stock insuffisant pour "${product.name}".`);
-      }
-      const unitPrice = Number(product.price);
-      total += unitPrice * item.quantity;
+      const unitPriceCents = toCents(product.price);
+      const lineTotalCents = unitPriceCents * item.quantity;
+      const lineTaxCents = extractTaxCents(lineTotalCents, Number(product.tax_rate_percent));
+      totalCents += lineTotalCents;
+      taxCents += lineTaxCents;
       resolvedItems.push({
         productId: item.productId,
         quantity: item.quantity,
-        unitPrice,
+        unitPriceCents,
         notes: item.notes,
       });
     }
+    const subtotalCents = totalCents - taxCents;
+
+    const { cashCents, cardCents } = resolvePaymentSplit(input.paymentMethod, totalCents, input);
 
     const businessDay = await getActiveBusinessDay(client, context.locationId);
     if (!businessDay) {
       throw new ValidationError("Aucune journée de caisse ouverte.");
     }
 
-    // TODO(SALE-03): still reproduces P0-02 (see module doc comment) — the
-    // fallback to `total` when no card amount is given is what records a
-    // cash sale as card revenue. API-01 only changed the *unit*: amounts now
-    // arrive as validated integer cents, converted here to the DECIMAL(10,2)
-    // form Postgres stores. SALE-03 replaces this block with the canonical
-    // server-side computation of cash + card = total.
-    const cashAmount = fromCents(input.cashAmountCents);
-    const cardAmount = input.cardAmountCents > 0 ? fromCents(input.cardAmountCents) : total;
-
     // Consumed inside this same transaction: if the checkout later rolls
-    // back (e.g. the stock check above already threw), the number is never
+    // back (e.g. the stock check below throws), the number is never
     // committed to an order and the counter simply has a gap, which
     // nextOrderNumber's own doc comment explains is an accepted trade-off.
     const orderNumber = await nextOrderNumber(client, context.locationId);
@@ -164,9 +191,9 @@ export async function performCheckout(
     const {
       rows: [order],
     } = await client.query<CheckoutOrderResult>(
-      `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, total_amount, paid_at)
-       VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, now())
-       RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, total_amount, created_at, paid_at`,
+      `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, paid_at)
+       VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, $10, $11, now())
+       RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
       [
         context.locationId,
         input.tableId,
@@ -174,18 +201,56 @@ export async function performCheckout(
         orderNumber,
         context.userId,
         input.paymentMethod,
-        cashAmount,
-        cardAmount,
-        total,
+        fromCents(cashCents),
+        fromCents(cardCents),
+        fromCents(subtotalCents),
+        fromCents(taxCents),
+        fromCents(totalCents),
       ],
     );
 
     for (const item of resolvedItems) {
       await client.query(
         "INSERT INTO order_items (order_id, product_id, quantity, unit_price, notes) VALUES ($1, $2, $3, $4, $5)",
-        [order.id, item.productId, item.quantity, item.unitPrice, item.notes],
+        [order.id, item.productId, item.quantity, fromCents(item.unitPriceCents), item.notes],
       );
-      await decrementProductStock(client, context.locationId, item.productId, item.quantity);
+    }
+
+    // STK-03: locks and decrements atomically, refusing the whole sale if
+    // any line's stock is insufficient (ValidationError, rolling back
+    // everything above). Re-locks the rows lockProductsForSale already
+    // locked above — see that function's doc comment for why this is safe
+    // and intentional rather than merged into one pass.
+    await decrementStockAtomically(
+      client,
+      context.locationId,
+      mergedItems.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      {
+        type: "SALE",
+        reason: `Vente — commande #${order.order_number}`,
+        createdBy: context.userId,
+        referenceType: "order",
+        referenceId: String(order.id),
+      },
+    );
+
+    // SALE-02: one CHARGE line per non-zero amount — a CASH/CARD sale gets
+    // one, a MIXED sale gets two. Never a REFUND here; that is ORD-10.
+    if (cashCents > 0) {
+      await recordCharge(client, context.locationId, {
+        orderId: order.id,
+        method: "CASH",
+        amount: fromCents(cashCents),
+        createdBy: context.userId,
+      });
+    }
+    if (cardCents > 0) {
+      await recordCharge(client, context.locationId, {
+        orderId: order.id,
+        method: "CARD",
+        amount: fromCents(cardCents),
+        createdBy: context.userId,
+      });
     }
 
     if (input.tableId) {
@@ -198,9 +263,15 @@ export async function performCheckout(
       action: "order.checkout",
       targetType: "order",
       targetId: order.id,
-      after: { total, paymentMethod: input.paymentMethod, itemCount: resolvedItems.length },
+      after: {
+        subtotal: subtotalCents,
+        tax: taxCents,
+        total: totalCents,
+        paymentMethod: input.paymentMethod,
+        itemCount: resolvedItems.length,
+      },
     });
 
-    return { order, total };
+    return { order, total: totalCents / 100 };
   });
 }

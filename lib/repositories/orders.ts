@@ -12,7 +12,13 @@ export interface OrderListRow {
   total_amount: string;
   subtotal_amount: string | null;
   tax_amount: string | null;
-  created_by: number;
+  /**
+   * NULL only for orders that predate ORD-01, whose author the prototype
+   * never recorded (see migrations/0006). Every order the application
+   * creates has one, and the database enforces it for any row carrying a
+   * fiscal snapshot.
+   */
+  created_by: number | null;
   notes: string | null;
   created_at: string;
   paid_at: string | null;

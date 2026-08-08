@@ -52,12 +52,15 @@ CREATE INDEX payments_refunded_payment_id_idx ON payments (refunded_payment_id);
 -- equivalent CHARGE rows, so the new model explains the same history the
 -- old columns already held — those columns are not dropped or touched.
 -- A mixed sale produces up to two rows here, one per non-zero amount.
--- `orders` has zero rows in every environment this has run against so far
--- (same situation STK-02 was in), so this is currently a no-op in
--- practice; written to be correct regardless, not because it does
--- anything today. `created_by` is always a real author here — unlike
--- STK-01's OPENING_BALANCE case, every order already has one
--- (`orders.created_by`, ORD-01), so nothing needed relaxing to NULL.
+--
+-- Orders with no recorded author are deliberately skipped. Those are the
+-- pre-ORD-01 rows that migration left `created_by` NULL for, on the grounds
+-- that the prototype never recorded who rang them up (see 0006's comment);
+-- `payments.created_by` is NOT NULL, and the two ways to satisfy it here
+-- would be to invent an author or to relax the column for every future row
+-- as well. Neither is worth it: those orders still carry their own
+-- cash_amount/card_amount, so no history is lost — it simply is not
+-- restated in a ledger that would have to lie about who took the money.
 INSERT INTO
   payments (location_id, order_id, type, method, amount, created_by)
 SELECT
@@ -71,6 +74,7 @@ FROM orders
 WHERE
   status IN ('PAID', 'REFUNDED')
   AND cash_amount > 0
+  AND created_by IS NOT NULL
 UNION ALL
 SELECT
   location_id,
@@ -82,4 +86,5 @@ SELECT
 FROM orders
 WHERE
   status IN ('PAID', 'REFUNDED')
-  AND card_amount > 0;
+  AND card_amount > 0
+  AND created_by IS NOT NULL;

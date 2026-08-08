@@ -277,6 +277,17 @@ h2 {
   font-size: 12px;
   margin: 14px 0 -5px;
 }
+/* SALE-08: same shape as .form-error, --orange instead of --red — an
+   uncertain outcome ("we don't know, check") is not the same situation as a
+   definitive rejection ("this is wrong, fix it") and should not look like one. */
+.form-warning {
+  color: #92500f;
+  background: #fdf1e3;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 12px;
+  margin: 14px 0 -5px;
+}
 .icon-button {
   width: 48px;
   background: var(--white);

@@ -51,7 +51,13 @@ export function OrderDrawer({
   table: string;
   tableId: number | null;
   onClose: () => void;
-  onComplete: (total: number) => void;
+  /**
+   * SALE-08: `replayed` is true when this total came from a stored result
+   * (DEC-08 recovery), not a sale the server just performed — callers use
+   * it to say so, rather than showing an identical "nouvelle vente"
+   * confirmation for what was actually a recovered retry.
+   */
+  onComplete: (total: number, replayed?: boolean) => void;
 }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [items, setItems] = useState<Item[]>([]);
@@ -65,13 +71,22 @@ export function OrderDrawer({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   /**
+   * SALE-08/DEC-08: true only for a network-layer failure (fetch itself
+   * threw — the request may or may not have reached the server, and the
+   * client has no way to tell). Distinct from a definitive server rejection
+   * (bad payload, insufficient stock): those are known outcomes to correct,
+   * this is an unknown outcome to check. Rendered as a different message and
+   * relabels the primary button to make the recovery action explicit,
+   * instead of leaving the cashier to guess whether clicking again is safe.
+   */
+  const [uncertain, setUncertain] = useState(false);
+  /**
    * API-02: one key per payment *attempt of this ticket*, not per HTTP
    * request. It is created when the drawer opens and deliberately kept
    * across failures and retries — that is precisely what lets the server
    * recognise a double-click, or a retry after a lost response, as the same
    * sale (DEC-08). A new key is only minted once the sale has succeeded and
-   * the drawer is reused. SALE-08 builds the "état incertain / récupération"
-   * experience on top of this.
+   * the drawer is reused.
    */
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
@@ -127,6 +142,7 @@ export function OrderDrawer({
 
   async function checkout() {
     setError("");
+    setUncertain(false);
 
     let paymentMethod: "CASH" | "CARD" | "MIXED";
     let cashAmount: string | undefined;
@@ -158,6 +174,11 @@ export function OrderDrawer({
 
     setSaving(true);
     try {
+      // SALE-08/DEC-08: read alongside the parsed body, not derived from
+      // it — a replayed response is byte-for-byte the same order the first
+      // (successful but lost) attempt would have shown, so only the header
+      // lib/idempotency.ts sets can tell the two apart.
+      let replayed = false;
       // SALE-06: the total this drawer reports is the server's own
       // total_amount from this response, not `total` (the client's sum of
       // catalog prices it already had). They usually agree, but "usually"
@@ -167,6 +188,9 @@ export function OrderDrawer({
       const result = await apiFetch<{ order: { total_amount: string } }>("/api/checkout", {
         method: "POST",
         idempotencyKey,
+        onResponseHeaders: (headers) => {
+          replayed = headers.get("Idempotent-Replay") === "true";
+        },
         body: JSON.stringify({
           tableId,
           items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
@@ -178,17 +202,30 @@ export function OrderDrawer({
       // The sale is recorded; the next one is a different operation and
       // must not reuse this key.
       setIdempotencyKey(crypto.randomUUID());
-      onComplete(Number(result.order.total_amount));
+      onComplete(Number(result.order.total_amount), replayed);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
-      // SALE-07: the server's own message already names the product that
-      // ran out (checkout.ts: `Stock insuffisant pour "${product.name}".`)
-      // — refetching turns that explanation into a visible state change,
-      // greying the item out in the grid above instead of leaving the
-      // cashier to guess why a retry would fail again. The item stays in
-      // the ticket, still removable with the existing "-" control: nothing
-      // here forces a correction, it just makes one possible.
-      productsQuery.refetch();
+      if (caught instanceof ApiError && caught.code === "NETWORK_ERROR") {
+        // DEC-08's "pendant l'encaissement" row, verbatim: the client does
+        // not know whether the server processed this request. The only
+        // safe response is to change nothing about the next attempt — the
+        // same idempotencyKey (untouched here) goes out again on the next
+        // click, and lib/idempotency.ts guarantees that either replays the
+        // sale that did go through or cleanly retries the one that didn't.
+        setUncertain(true);
+        setError(
+          "Connexion perdue pendant l'encaissement. Impossible de confirmer si la vente a été enregistrée : cliquez sur « Vérifier le paiement » pour réessayer — sans risque de doublon.",
+        );
+      } else {
+        setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
+        // SALE-07: the server's own message already names the product that
+        // ran out (checkout.ts: `Stock insuffisant pour "${product.name}".`)
+        // — refetching turns that explanation into a visible state change,
+        // greying the item out in the grid above instead of leaving the
+        // cashier to guess why a retry would fail again. The item stays in
+        // the ticket, still removable with the existing "-" control: nothing
+        // here forces a correction, it just makes one possible.
+        productsQuery.refetch();
+      }
     } finally {
       setSaving(false);
     }
@@ -311,7 +348,11 @@ export function OrderDrawer({
         </div>
       )}
       {error && (
-        <p className="form-error" role="alert">
+        // SALE-08: an uncertain outcome is a different situation from a
+        // definitive rejection — visually distinct (form-warning, not
+        // form-error) so the cashier reads "check/retry" and not "fix your
+        // input", which is what the copy inside actually asks for.
+        <p className={uncertain ? "form-warning" : "form-error"} role="alert">
           {error}
         </p>
       )}
@@ -321,7 +362,11 @@ export function OrderDrawer({
         className="primary-button"
         style={{ width: "100%", marginTop: 12, opacity: items.length ? 1 : 0.45 }}
       >
-        {saving ? "Encaissement…" : `Encaisser · ${total.toFixed(2)} €`}
+        {saving
+          ? "Encaissement…"
+          : uncertain
+            ? `Vérifier le paiement · ${total.toFixed(2)} €`
+            : `Encaisser · ${total.toFixed(2)} €`}
       </button>
     </Dialog>
   );

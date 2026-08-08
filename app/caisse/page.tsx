@@ -43,12 +43,20 @@ export default function Caisse() {
     setTimeout(() => setNotice(""), 3500);
   }
 
-  function done(total: number) {
+  function done(total: number, replayed?: boolean) {
     setSelected(null);
     tablesQuery.refetch();
     revenueQuery.refetch();
     cashQuery.refetch();
-    message(`Vente encaissée (${total.toFixed(2)} €) : stock et tables mis à jour`);
+    // SALE-08/DEC-08: a retry that recovered an already-recorded sale
+    // (network failure, response lost, same idempotency key) is told apart
+    // from a fresh sale — same underlying refresh, different notice, so a
+    // cashier who just retried isn't left assuming they made two sales.
+    message(
+      replayed
+        ? `Vente déjà enregistrée retrouvée (${total.toFixed(2)} €) : aucun doublon créé, stock et tables mis à jour`
+        : `Vente encaissée (${total.toFixed(2)} €) : stock et tables mis à jour`,
+    );
   }
 
   function movementSaved(_amount: number, _type: "IN" | "OUT") {

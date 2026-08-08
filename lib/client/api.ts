@@ -41,6 +41,16 @@ export interface ApiFetchOptions extends RequestInit {
    * server has no other way to tell a retry from a second sale.
    */
   idempotencyKey?: string;
+  /**
+   * SALE-08: called with the raw response headers on a successful (2xx)
+   * response, before the parsed body is returned. Exists so a caller can
+   * read a signal the JSON body itself does not carry — e.g. checkout's
+   * `Idempotent-Replay` header (DEC-08), which distinguishes "the server
+   * just ran this" from "this is the stored result of an earlier attempt,
+   * handed back unchanged" — without every apiFetch caller having to deal
+   * with a raw Response.
+   */
+  onResponseHeaders?: (headers: Headers) => void;
 }
 
 export async function apiFetch<T>(input: string, init?: ApiFetchOptions): Promise<T> {
@@ -87,5 +97,6 @@ export async function apiFetch<T>(input: string, init?: ApiFetchOptions): Promis
     );
   }
 
+  init?.onResponseHeaders?.(response.headers);
   return body as T;
 }

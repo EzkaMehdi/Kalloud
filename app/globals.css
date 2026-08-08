@@ -570,6 +570,23 @@ dialog.sheet::backdrop {
   font-weight: 700;
   font-size: 13px;
 }
+.product.unavailable {
+  background: #f4f6f4;
+  opacity: 0.75;
+}
+.product.unavailable b,
+.product.unavailable span {
+  color: var(--muted);
+}
+.unavailable-badge {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
 .ticket {
   background: white;
   border-radius: 18px;

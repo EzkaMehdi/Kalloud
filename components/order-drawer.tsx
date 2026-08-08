@@ -21,6 +21,7 @@ interface CatalogProduct {
   name: string;
   price: string;
   category: string | null;
+  is_available: boolean;
 }
 
 const ALL_CATEGORIES = "Tout";
@@ -79,10 +80,6 @@ export function OrderDrawer({
   // catalog's ids didn't reliably match the seeded one at all).
   const productsQuery = useAsyncData(() => apiFetch<CatalogProduct[]>("/api/products"), []);
 
-  // SALE-07 (later) is what makes an inactive/out-of-stock product visible
-  // but non-addable; for now every product SALE-01 returns is shown and
-  // addable, and checkout.ts (SALE-03) already refuses one that turns out
-  // to be inactive or under-stocked when the sale is actually attempted.
   const categories = useMemo(() => {
     if (productsQuery.state.status !== "success") return [ALL_CATEGORIES];
     const names = new Set(
@@ -97,6 +94,11 @@ export function OrderDrawer({
   );
 
   function add(product: CatalogProduct) {
+    // SALE-07: the button is already `disabled` for an unavailable product
+    // (native disabled buttons never fire onClick), but guarding here too
+    // costs nothing and means this function stays correct even if a future
+    // caller stops going through that button.
+    if (!product.is_available) return;
     setItems((old) => {
       const existing = old.find((item) => item.id === product.id);
       if (existing) {
@@ -179,6 +181,14 @@ export function OrderDrawer({
       onComplete(Number(result.order.total_amount));
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
+      // SALE-07: the server's own message already names the product that
+      // ran out (checkout.ts: `Stock insuffisant pour "${product.name}".`)
+      // — refetching turns that explanation into a visible state change,
+      // greying the item out in the grid above instead of leaving the
+      // cashier to guess why a retry would fail again. The item stays in
+      // the ticket, still removable with the existing "-" control: nothing
+      // here forces a correction, it just makes one possible.
+      productsQuery.refetch();
     } finally {
       setSaving(false);
     }
@@ -210,9 +220,20 @@ export function OrderDrawer({
             {products
               .filter((product) => category === ALL_CATEGORIES || product.category === category)
               .map((product) => (
-                <button onClick={() => add(product)} className="product" key={product.id}>
+                <button
+                  onClick={() => add(product)}
+                  disabled={!product.is_available}
+                  aria-disabled={!product.is_available}
+                  className={`product ${product.is_available ? "" : "unavailable"}`}
+                  key={product.id}
+                >
                   <b>{product.name}</b>
                   <span>{Number(product.price).toFixed(2)} €</span>
+                  {/* SALE-07: visible, not just a disabled/greyed-out
+                      button with no explanation — "produits indisponibles
+                      visibles mais non ajoutables" is the whole point, not
+                      "hidden". */}
+                  {!product.is_available && <small className="unavailable-badge">Rupture</small>}
                 </button>
               ))}
           </div>

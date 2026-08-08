@@ -4,16 +4,23 @@ import { CalendarPlus, Plus, Table2 } from "lucide-react";
 import { useState } from "react";
 import { CashMovementModal } from "@/components/cash-movement-modal";
 import { CloseDayModal } from "@/components/close-day-modal";
-import { OrderDrawer } from "@/components/order-drawer";
+import { OrderDrawer, type Ticket } from "@/components/order-drawer";
 import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
-import { apiFetch } from "@/lib/client/api";
+import { ApiError, apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 
+/**
+ * ORD-03: occupancy is derived server-side from the table's open ticket —
+ * there is no stored status to read any more, and no local guess to keep in
+ * sync with it.
+ */
 interface DiningTable {
   id: number;
   name: string;
-  status: "FREE" | "OCCUPIED";
+  open_order_id: number | null;
+  is_occupied: boolean;
+  open_order_total: string | null;
 }
 
 interface CashSummary {
@@ -32,7 +39,8 @@ export default function Caisse() {
     [],
   );
 
-  const [selected, setSelected] = useState<{ id: number | null; name: string } | null>(null);
+  const [ticket, setTicket] = useState<Ticket | null>(null);
+  const [opening, setOpening] = useState(false);
   const [notice, setNotice] = useState("");
   const [movementOpen, setMovementOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
@@ -44,7 +52,7 @@ export default function Caisse() {
   }
 
   function done(total: number, replayed?: boolean) {
-    setSelected(null);
+    setTicket(null);
     tablesQuery.refetch();
     revenueQuery.refetch();
     cashQuery.refetch();
@@ -71,20 +79,44 @@ export default function Caisse() {
     message("Service clôturé : un nouveau service est ouvert");
   }
 
+  /**
+   * ORD-04: opening a table means opening (or resuming) its ticket
+   * server-side, and only then showing the drawer.
+   *
+   * The optimistic `PATCH {status: "OCCUPIED"}` this replaces marked the
+   * table busy before any order existed, and had no rollback — an abandoned
+   * order left it occupied with nothing to reconcile against (ORD-03). Now
+   * the ticket *is* the occupancy, so there is nothing to undo: if this call
+   * fails, no ticket was created and the table was never marked.
+   */
   async function openTable(tableEntry: DiningTable) {
-    setSelected({ id: tableEntry.id, name: tableEntry.name });
-    if (tableEntry.status === "OCCUPIED") return;
+    await openTicket({ tableId: tableEntry.id }, tableEntry.is_occupied);
+  }
+
+  async function openTicket(body: { tableId: number | null }, resuming = false) {
+    if (opening) return;
+    setOpening(true);
     try {
-      await apiFetch(`/api/tables/${tableEntry.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ status: "OCCUPIED" }),
+      const opened = await apiFetch<{ ticket: Ticket; created: boolean }>("/api/tickets", {
+        method: "POST",
+        body: JSON.stringify(body),
       });
+      setTicket(opened.ticket);
       tablesQuery.refetch();
-    } catch {
-      // UX-01: a failed status change must not be silently ignored (it was,
-      // pre-audit fix P0-05) — the drawer still opens (the cashier can keep
-      // working), but they are told the floor plan may be out of sync.
-      message("La table n'a pas pu être marquée occupée. Le plan de salle sera à vérifier.");
+      if (!opened.created || resuming) {
+        message(`Ticket #${opened.ticket.order_number} repris`);
+      }
+    } catch (caught) {
+      // UX-01: no drawer on a failure. Opening one over a ticket that does
+      // not exist is exactly the "mock silencieux" the audit flagged — the
+      // cashier would type a round into nothing.
+      message(
+        caught instanceof ApiError
+          ? caught.message
+          : "Impossible d'ouvrir le ticket. Réessayez dans un instant.",
+      );
+    } finally {
+      setOpening(false);
     }
   }
 
@@ -104,7 +136,8 @@ export default function Caisse() {
           <h1>La caisse</h1>
         </div>
         <button
-          onClick={() => setSelected({ id: null, name: "Vente directe" })}
+          onClick={() => openTicket({ tableId: null })}
+          disabled={opening}
           className="icon-button"
           aria-label="Vente directe"
         >
@@ -184,26 +217,39 @@ export default function Caisse() {
             {tables.map((tableEntry) => (
               <button
                 onClick={() => openTable(tableEntry)}
+                disabled={opening}
                 key={tableEntry.id}
-                className={`table-card ${tableEntry.status === "OCCUPIED" ? "occupied" : ""}`}
+                className={`table-card ${tableEntry.is_occupied ? "occupied" : ""}`}
               >
                 <Table2 className="table-icon" size={25} aria-hidden="true" />
-                <span className={`pill ${tableEntry.status === "FREE" ? "free" : "busy"}`}>
-                  {tableEntry.status === "FREE" ? "LIBRE" : "EN COURS"}
+                <span className={`pill ${tableEntry.is_occupied ? "busy" : "free"}`}>
+                  {tableEntry.is_occupied ? "EN COURS" : "LIBRE"}
                 </span>
                 <h3>{tableEntry.name}</h3>
-                <p>{tableEntry.status === "FREE" ? "Disponible" : "Occupée"}</p>
+                {/* The running total comes from the open ticket itself, so a
+                    table can never show an amount it has no order for. */}
+                <p>
+                  {tableEntry.is_occupied
+                    ? `${Number(tableEntry.open_order_total ?? 0)
+                        .toFixed(2)
+                        .replace(".", ",")} €`
+                    : "Disponible"}
+                </p>
               </button>
             ))}
           </div>
         )}
       </AsyncSection>
 
-      {selected && (
+      {ticket && (
         <OrderDrawer
-          table={selected.name}
-          tableId={selected.id}
-          onClose={() => setSelected(null)}
+          ticket={ticket}
+          onClose={() => {
+            setTicket(null);
+            // A ticket left open keeps its table busy — refetch so the floor
+            // plan says so immediately rather than at the next navigation.
+            tablesQuery.refetch();
+          }}
           onComplete={done}
         />
       )}

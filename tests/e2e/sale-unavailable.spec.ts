@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CreatedProduct {
   id: number;
@@ -44,7 +45,7 @@ test.describe("SALE-07: unavailable products stay visible but are not addable", 
     const product = await createProduct(page.request, 0);
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Scoped to the catalog grid, not the whole dialog: once an item is on
@@ -74,7 +75,7 @@ test.describe("SALE-07: a late stock change is explained and the ticket stays co
     const product = await createProduct(page.request, 1);
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     // Scoped to the catalog grid — see the sibling describe block above for

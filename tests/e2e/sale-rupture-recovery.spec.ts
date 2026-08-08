@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CreatedProduct {
   id: number;
@@ -66,7 +67,7 @@ test.describe("SALE-10: recovering from a rupture reaches a completed sale, not 
     const runsOut = await createProduct(page.request, 1);
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     await addToTicket(dialog, keeper);
     await addToTicket(dialog, runsOut);
@@ -115,7 +116,7 @@ test.describe("SALE-10: recovering from a rupture reaches a completed sale, not 
     const product = await createProduct(page.request, 5);
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     await addToTicket(dialog, product);
     await expect(dialog.locator(".ticket-line")).toHaveCount(1);

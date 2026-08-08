@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CreatedProduct {
   id: number;
@@ -51,7 +52,7 @@ test.describe("SALE-06: the server's response is the truth", () => {
     const product = await createProduct(page.request, "15.00");
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await dialog.getByRole("button", { name: new RegExp(escaped) }).click();
@@ -87,7 +88,7 @@ test.describe("SALE-06: the server's response is the truth", () => {
     const beforeText = await balanceLocator.innerText();
     const before = Number(beforeText.replace(/[^\d,.-]/g, "").replace(",", "."));
 
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await dialog.getByRole("button", { name: new RegExp(escaped) }).click();

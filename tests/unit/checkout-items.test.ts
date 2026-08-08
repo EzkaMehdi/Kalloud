@@ -2,13 +2,18 @@ import { describe, expect, it } from "vitest";
 import { mergeItemsByProduct } from "../../lib/services/checkout";
 import { checkoutBodySchema } from "../../lib/validation/schemas";
 
-/** Builds the validated `items` array the service receives, via the real schema. */
+/**
+ * Builds the validated `items` array the service receives, via the real
+ * schema. `items` became optional on the schema with ORD-04 (a checkout can
+ * instead name an existing ticket), so the non-null assertion states what
+ * this helper always passes: a direct sale, which must carry lines.
+ */
 function items(raw: { productId: number; quantity: number; notes?: string }[]) {
   return checkoutBodySchema.parse({
     items: raw,
     paymentMethod: "CARD",
     cardAmount: "10.00",
-  }).items;
+  }).items!;
 }
 
 describe("API-02: checkout lines are locked in a deterministic order", () => {

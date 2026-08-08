@@ -576,29 +576,33 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ## 9. Phase 4A — Tickets persistants et parcours de salle
 
-- [ ] **`ORD-02` — Créer les services de ticket ouvert**
+- [x] **`ORD-02` — Créer les services de ticket ouvert**
   - Priorité : `P0`
   - Dépend de : `ORD-01`, `API-01`, `SEC-05`, `SEC-06`
   - Livrable : créer, lire, modifier et reprendre une commande `OPEN`.
   - Acceptation : une table ne possède au plus qu’un ticket ouvert actif ; aucun ancien endpoint de finalisation concurrent ne reste exposé.
+  - Mise en œuvre : `lib/repositories/tickets.ts`, `lib/services/tickets.ts`, routes `POST /api/tickets` et `GET /api/tickets/:id`. L’unicité est un index partiel (`one_open_order_per_table`, migration 0011), donc garantie par la base et non par le service.
 
-- [ ] **`ORD-03` — Dériver l’état des tables des tickets**
+- [x] **`ORD-03` — Dériver l’état des tables des tickets**
   - Priorité : `P0`
   - Dépend de : `ORD-02`
   - Livrable : statut libre/occupé cohérent avec la commande ouverte.
   - Acceptation : aucune table occupée sans ticket ; aucun `PATCH` optimiste sans rollback.
+  - Mise en œuvre : la colonne `dining_tables.status` est **supprimée** (migration 0011). L’occupation se calcule à la lecture depuis le ticket ouvert, et le `PATCH {status}` optimiste du navigateur n’a plus de remplaçant — encaisser libère la table par le seul fait que la commande n’est plus `OPEN`.
 
-- [ ] **`ORD-04` — Ouvrir ou reprendre un ticket depuis la salle**
+- [x] **`ORD-04` — Ouvrir ou reprendre un ticket depuis la salle**
   - Priorité : `P0`
   - Dépend de : `ORD-02`, `ORD-03`, `SALE-04`, `UX-01`, `UX-02`, `UX-06`
   - Livrable : tiroir alimenté par la commande persistée.
   - Acceptation : fermer, changer de route ou rafraîchir ne perd aucun article.
+  - Mise en œuvre : le tiroir s’ouvre *sur* un ticket existant ; l’encaissement nomme la commande (`orderId`) et le serveur facture ses lignes persistées, jamais celles du navigateur. Prouvé par un rechargement complet dans `tests/e2e/ticket-persistence.spec.ts`.
 
-- [ ] **`ORD-05` — Sauvegarder les modifications et gérer les conflits**
+- [x] **`ORD-05` — Sauvegarder les modifications et gérer les conflits**
   - Priorité : `P0`
   - Dépend de : `ORD-04`, `API-02`, `DEC-08`
   - Livrable : ajout/suppression/quantité persistés avec version ou stratégie de conflit.
   - Acceptation : deux appareils ne s’écrasent pas silencieusement ; l’utilisateur peut recharger l’état courant.
+  - Mise en œuvre : `PUT /api/tickets/:id/items` avec verrou optimiste (`orders.version`). Une version périmée renvoie 409 et le tiroir propose « Recharger le ticket » au lieu de laisser renvoyer une liste obsolète. Le conflit réel entre deux navigateurs est testé en E2E.
 
 - [ ] **`ORD-06` — Annuler un ticket ouvert**
   - Priorité : `P0`

@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CreatedProduct {
   id: number;
@@ -69,7 +70,7 @@ test.describe("SALE-08: a lost response is uncertain, not a failure to fix", () 
     });
 
     await page.goto("/caisse");
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await dialog

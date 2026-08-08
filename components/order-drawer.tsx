@@ -1,7 +1,7 @@
 "use client";
 
 import { Minus, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { AsyncSection } from "@/components/ui/async-section";
 import { TextField } from "@/components/ui/text-field";
@@ -24,6 +24,28 @@ interface CatalogProduct {
   is_available: boolean;
 }
 
+/** ORD-02's ticket shape, likewise narrowed to what the drawer reads. */
+export interface TicketItem {
+  id: number;
+  product_id: number;
+  product_name: string;
+  quantity: number;
+  unit_price: string;
+  notes: string | null;
+  is_available: boolean;
+}
+
+export interface Ticket {
+  id: number;
+  order_number: number;
+  table_id: number | null;
+  table_name: string | null;
+  status: string;
+  total_amount: string;
+  version: number;
+  items: TicketItem[];
+}
+
 const ALL_CATEGORIES = "Tout";
 
 /**
@@ -40,16 +62,28 @@ const paymentOptions = [
   { value: "Mixte", label: "Mixte" },
 ] as const;
 
-type Item = { id: number; name: string; price: number; quantity: number };
+/** The line list as the drawer wants it saved — product ids and quantities, nothing priced. */
+interface DraftLine {
+  productId: number;
+  quantity: number;
+}
+
+function toDraft(ticket: Ticket): DraftLine[] {
+  return ticket.items.map((item) => ({ productId: item.product_id, quantity: item.quantity }));
+}
 
 export function OrderDrawer({
-  table,
-  tableId,
+  ticket: initialTicket,
   onClose,
   onComplete,
 }: {
-  table: string;
-  tableId: number | null;
+  /**
+   * ORD-04: the drawer is opened *on* a ticket that already exists
+   * server-side, never on an empty local basket. That is what makes
+   * "fermer, changer de route ou rafraîchir ne perd aucun article" true —
+   * there is no client-only state for a refresh to lose.
+   */
+  ticket: Ticket;
   onClose: () => void;
   /**
    * SALE-08: `replayed` is true when this total came from a stored result
@@ -60,7 +94,13 @@ export function OrderDrawer({
   onComplete: (total: number, replayed?: boolean) => void;
 }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
-  const [items, setItems] = useState<Item[]>([]);
+  const [ticket, setTicket] = useState<Ticket>(initialTicket);
+  /**
+   * ORD-05: what the cashier has asked for, which may briefly run ahead of
+   * what the server has confirmed. Tapping a product should feel immediate;
+   * the authoritative list is whatever `setTicket` last received back.
+   */
+  const [draft, setDraft] = useState<DraftLine[]>(() => toDraft(initialTicket));
   const [payment, setPayment] = useState<(typeof paymentOptions)[number]["value"]>("CB");
   // SALE-05: only meaningful when payment === "Mixte" — CB/Espèces derive
   // their amount entirely from the server-computed total (SALE-03 ignores
@@ -69,24 +109,28 @@ export function OrderDrawer({
   const [cashSplit, setCashSplit] = useState("");
   const [cardSplit, setCardSplit] = useState("");
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState("");
+  /**
+   * ORD-05/DEC-08: another device saved this ticket first. Not an error the
+   * cashier caused and not something a retry fixes — the only honest move is
+   * to show the server's current state, so the drawer offers exactly that
+   * rather than letting a stale line list be re-sent.
+   */
+  const [conflict, setConflict] = useState(false);
   /**
    * SALE-08/DEC-08: true only for a network-layer failure (fetch itself
    * threw — the request may or may not have reached the server, and the
    * client has no way to tell). Distinct from a definitive server rejection
    * (bad payload, insufficient stock): those are known outcomes to correct,
-   * this is an unknown outcome to check. Rendered as a different message and
-   * relabels the primary button to make the recovery action explicit,
-   * instead of leaving the cashier to guess whether clicking again is safe.
+   * this is an unknown outcome to check.
    */
   const [uncertain, setUncertain] = useState(false);
   /**
    * API-02: one key per payment *attempt of this ticket*, not per HTTP
-   * request. It is created when the drawer opens and deliberately kept
-   * across failures and retries — that is precisely what lets the server
-   * recognise a double-click, or a retry after a lost response, as the same
-   * sale (DEC-08). A new key is only minted once the sale has succeeded and
-   * the drawer is reused.
+   * request. Kept across failures and retries — that is precisely what lets
+   * the server recognise a double-click, or a retry after a lost response,
+   * as the same sale (DEC-08).
    */
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
 
@@ -94,6 +138,80 @@ export function OrderDrawer({
   // no separate constant that could drift from it (P0-03: the old local
   // catalog's ids didn't reliably match the seeded one at all).
   const productsQuery = useAsyncData(() => apiFetch<CatalogProduct[]>("/api/products"), []);
+
+  /**
+   * Saves run one at a time. A cashier tapping "+" three times quickly would
+   * otherwise fire three writes against the same version, of which two are
+   * guaranteed to lose the optimistic check and 409 — a conflict the user
+   * never actually had. The queue collapses those into "save the latest
+   * intent once the previous save has answered".
+   */
+  const inFlight = useRef(false);
+  const queued = useRef<DraftLine[] | null>(null);
+
+  const save = useCallback(
+    async (lines: DraftLine[], version: number) => {
+      if (inFlight.current) {
+        // A save is already talking to the server. Record the newer intent
+        // and let the loop below pick it up with the version the in-flight
+        // save comes back with.
+        queued.current = lines;
+        return;
+      }
+      inFlight.current = true;
+      setSyncing(true);
+      try {
+        let pending: DraftLine[] | null = lines;
+        let currentVersion = version;
+        // Sequential by design: each save must carry the version the
+        // previous one produced, so awaiting inside the loop is the point
+        // rather than something to parallelise away.
+        while (pending) {
+          const saved: Ticket = await apiFetch<Ticket>(`/api/tickets/${initialTicket.id}/items`, {
+            method: "PUT",
+            body: JSON.stringify({ version: currentVersion, items: pending }),
+          });
+          setTicket(saved);
+          setDraft(toDraft(saved));
+          setError("");
+          currentVersion = saved.version;
+          pending = queued.current;
+          queued.current = null;
+        }
+      } catch (caught) {
+        queued.current = null;
+        if (caught instanceof ApiError && caught.status === 409) {
+          setConflict(true);
+          setError(caught.message);
+        } else {
+          setError(
+            caught instanceof ApiError ? caught.message : "Impossible d'enregistrer le ticket.",
+          );
+        }
+      } finally {
+        inFlight.current = false;
+        setSyncing(false);
+      }
+    },
+    // `initialTicket.id` is stable for the drawer's lifetime: a different
+    // ticket means a different drawer instance.
+    [initialTicket.id],
+  );
+
+  const reload = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const fresh = await apiFetch<Ticket>(`/api/tickets/${initialTicket.id}`);
+      setTicket(fresh);
+      setDraft(toDraft(fresh));
+      setConflict(false);
+      setError("");
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Impossible de recharger le ticket.");
+    } finally {
+      setSyncing(false);
+    }
+  }, [initialTicket.id]);
 
   const categories = useMemo(() => {
     if (productsQuery.state.status !== "success") return [ALL_CATEGORIES];
@@ -103,10 +221,19 @@ export function OrderDrawer({
     return [ALL_CATEGORIES, ...names];
   }, [productsQuery.state]);
 
-  const total = useMemo(
-    () => items.reduce((sum, item) => sum + item.price * item.quantity, 0),
-    [items],
-  );
+  /**
+   * SALE-06: the displayed total is the server's own `total_amount`, not a
+   * client re-computation. While a save is in flight the two can disagree
+   * for a moment — that is the honest state, and the "Enregistrement…"
+   * indicator says so rather than showing a number nothing has confirmed.
+   */
+  const total = Number(ticket.total_amount);
+
+  function mutate(next: DraftLine[]) {
+    if (conflict) return;
+    setDraft(next);
+    void save(next, ticket.version);
+  }
 
   function add(product: CatalogProduct) {
     // SALE-07: the button is already `disabled` for an unavailable product
@@ -114,27 +241,23 @@ export function OrderDrawer({
     // costs nothing and means this function stays correct even if a future
     // caller stops going through that button.
     if (!product.is_available) return;
-    setItems((old) => {
-      const existing = old.find((item) => item.id === product.id);
-      if (existing) {
-        return old.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item,
-        );
-      }
-      return [
-        ...old,
-        { id: product.id, name: product.name, price: Number(product.price), quantity: 1 },
-      ];
-    });
+    const existing = draft.find((line) => line.productId === product.id);
+    mutate(
+      existing
+        ? draft.map((line) =>
+            line.productId === product.id ? { ...line, quantity: line.quantity + 1 } : line,
+          )
+        : [...draft, { productId: product.id, quantity: 1 }],
+    );
   }
 
-  function delta(name: string, change: number) {
-    setItems((old) =>
-      old.flatMap((item) =>
-        item.name !== name
-          ? [item]
-          : item.quantity + change > 0
-            ? [{ ...item, quantity: item.quantity + change }]
+  function delta(productId: number, change: number) {
+    mutate(
+      draft.flatMap((line) =>
+        line.productId !== productId
+          ? [line]
+          : line.quantity + change > 0
+            ? [{ ...line, quantity: line.quantity + change }]
             : [],
       ),
     );
@@ -174,43 +297,31 @@ export function OrderDrawer({
 
     setSaving(true);
     try {
-      // SALE-08/DEC-08: read alongside the parsed body, not derived from
-      // it — a replayed response is byte-for-byte the same order the first
-      // (successful but lost) attempt would have shown, so only the header
-      // lib/idempotency.ts sets can tell the two apart.
       let replayed = false;
-      // SALE-06: the total this drawer reports is the server's own
-      // total_amount from this response, not `total` (the client's sum of
-      // catalog prices it already had). They usually agree, but "usually"
-      // is exactly the gap DEC-05/SALE-03 close server-side — the display
-      // should not independently recompute a number the server already
-      // settled, even one that would normally match.
       const result = await apiFetch<{ order: { total_amount: string } }>("/api/checkout", {
         method: "POST",
         idempotencyKey,
         onResponseHeaders: (headers) => {
           replayed = headers.get("Idempotent-Replay") === "true";
         },
+        // ORD-04: the sale names the ticket; its lines are read from the
+        // database, not re-sent from here. Whatever this browser still has
+        // in memory is irrelevant to what the customer is charged.
         body: JSON.stringify({
-          tableId,
-          items: items.map((item) => ({ productId: item.id, quantity: item.quantity })),
+          orderId: ticket.id,
           paymentMethod,
           ...(cashAmount ? { cashAmount } : {}),
           ...(cardAmount ? { cardAmount } : {}),
         }),
       });
-      // The sale is recorded; the next one is a different operation and
-      // must not reuse this key.
       setIdempotencyKey(crypto.randomUUID());
       onComplete(Number(result.order.total_amount), replayed);
     } catch (caught) {
       if (caught instanceof ApiError && caught.code === "NETWORK_ERROR") {
         // DEC-08's "pendant l'encaissement" row, verbatim: the client does
-        // not know whether the server processed this request. The only
-        // safe response is to change nothing about the next attempt — the
-        // same idempotencyKey (untouched here) goes out again on the next
-        // click, and lib/idempotency.ts guarantees that either replays the
-        // sale that did go through or cleanly retries the one that didn't.
+        // not know whether the server processed this request. The only safe
+        // response is to change nothing about the next attempt — the same
+        // idempotencyKey (untouched here) goes out again on the next click.
         setUncertain(true);
         setError(
           "Connexion perdue pendant l'encaissement. Impossible de confirmer si la vente a été enregistrée : cliquez sur « Vérifier le paiement » pour réessayer — sans risque de doublon.",
@@ -218,12 +329,8 @@ export function OrderDrawer({
       } else {
         setError(caught instanceof ApiError ? caught.message : "Erreur d'encaissement.");
         // SALE-07: the server's own message already names the product that
-        // ran out (checkout.ts: `Stock insuffisant pour "${product.name}".`)
-        // — refetching turns that explanation into a visible state change,
-        // greying the item out in the grid above instead of leaving the
-        // cashier to guess why a retry would fail again. The item stays in
-        // the ticket, still removable with the existing "-" control: nothing
-        // here forces a correction, it just makes one possible.
+        // ran out — refetching turns that explanation into a visible state
+        // change, greying the item out in the grid above.
         productsQuery.refetch();
       }
     } finally {
@@ -231,8 +338,13 @@ export function OrderDrawer({
     }
   }
 
+  const eyebrow =
+    ticket.items.length > 0
+      ? `Ticket #${ticket.order_number} en cours`
+      : `Ticket #${ticket.order_number}`;
+
   return (
-    <Dialog title={table} eyebrow="Nouvelle commande" onClose={onClose}>
+    <Dialog title={ticket.table_name ?? "Vente directe"} eyebrow={eyebrow} onClose={onClose}>
       <div className="product-cats" role="tablist" aria-label="Catégories de produits">
         {categories.map((cat) => (
           <button
@@ -259,8 +371,8 @@ export function OrderDrawer({
               .map((product) => (
                 <button
                   onClick={() => add(product)}
-                  disabled={!product.is_available}
-                  aria-disabled={!product.is_available}
+                  disabled={!product.is_available || conflict}
+                  aria-disabled={!product.is_available || conflict}
                   className={`product ${product.is_available ? "" : "unavailable"}`}
                   key={product.id}
                 >
@@ -278,36 +390,41 @@ export function OrderDrawer({
       </AsyncSection>
       <div className="ticket">
         <h2>Articles sélectionnés</h2>
-        {items.length === 0 ? (
+        {ticket.items.length === 0 ? (
           <p className="stock-meta">Touchez un article pour l&apos;ajouter.</p>
         ) : (
-          items.map((item) => (
-            <div className="ticket-line" key={item.name}>
+          ticket.items.map((item) => (
+            <div className="ticket-line" key={item.id}>
               <div>
-                <b>{item.name}</b>
+                <b>{item.product_name}</b>
+                {!item.is_available && <small className="unavailable-badge">Rupture</small>}
                 <div className="quantity">
                   <button
-                    onClick={() => delta(item.name, -1)}
-                    aria-label={`Retirer un ${item.name}`}
+                    onClick={() => delta(item.product_id, -1)}
+                    disabled={conflict}
+                    aria-label={`Retirer un ${item.product_name}`}
                   >
                     <Minus size={14} />
                   </button>
                   <span aria-live="polite">{item.quantity}</span>
                   <button
-                    onClick={() => delta(item.name, 1)}
-                    aria-label={`Ajouter un ${item.name}`}
+                    onClick={() => delta(item.product_id, 1)}
+                    disabled={conflict}
+                    aria-label={`Ajouter un ${item.product_name}`}
                   >
                     <Plus size={14} />
                   </button>
                 </div>
               </div>
-              <b>{(item.price * item.quantity).toFixed(2)} €</b>
+              <b>{(Number(item.unit_price) * item.quantity).toFixed(2)} €</b>
             </div>
           ))
         )}
         <div className="ticket-total">
           <span>Total</span>
-          <span>{total.toFixed(2)} €</span>
+          <span>
+            {total.toFixed(2)} €{syncing ? " · enregistrement…" : ""}
+          </span>
         </div>
       </div>
       <div className="checkout" role="radiogroup" aria-label="Moyen de paiement">
@@ -348,26 +465,41 @@ export function OrderDrawer({
         </div>
       )}
       {error && (
-        // SALE-08: an uncertain outcome is a different situation from a
-        // definitive rejection — visually distinct (form-warning, not
-        // form-error) so the cashier reads "check/retry" and not "fix your
-        // input", which is what the copy inside actually asks for.
-        <p className={uncertain ? "form-warning" : "form-error"} role="alert">
+        // SALE-08/ORD-05: an uncertain outcome and a version conflict are
+        // both "something to check", not "fix your input" — visually
+        // distinct from a definitive rejection so the copy matches the
+        // action actually being asked for.
+        <p className={uncertain || conflict ? "form-warning" : "form-error"} role="alert">
           {error}
         </p>
       )}
-      <button
-        disabled={!items.length || saving}
-        onClick={checkout}
-        className="primary-button"
-        style={{ width: "100%", marginTop: 12, opacity: items.length ? 1 : 0.45 }}
-      >
-        {saving
-          ? "Encaissement…"
-          : uncertain
-            ? `Vérifier le paiement · ${total.toFixed(2)} €`
-            : `Encaisser · ${total.toFixed(2)} €`}
-      </button>
+      {conflict ? (
+        <button
+          onClick={reload}
+          disabled={syncing}
+          className="primary-button"
+          style={{ width: "100%", marginTop: 12 }}
+        >
+          {syncing ? "Rechargement…" : "Recharger le ticket"}
+        </button>
+      ) : (
+        <button
+          disabled={ticket.items.length === 0 || saving || syncing}
+          onClick={checkout}
+          className="primary-button"
+          style={{
+            width: "100%",
+            marginTop: 12,
+            opacity: ticket.items.length ? 1 : 0.45,
+          }}
+        >
+          {saving
+            ? "Encaissement…"
+            : uncertain
+              ? `Vérifier le paiement · ${total.toFixed(2)} €`
+              : `Encaisser · ${total.toFixed(2)} €`}
+        </button>
+      )}
     </Dialog>
   );
 }

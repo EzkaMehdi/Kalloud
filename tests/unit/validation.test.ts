@@ -4,7 +4,6 @@ import { parseOrThrow } from "../../lib/validation/parse";
 import {
   cashMovementTypeSchema,
   dateRangeSchema,
-  diningTableStatusSchema,
   emailSchema,
   idParamSchema,
   idSchema,
@@ -128,7 +127,6 @@ describe("API-01: text, rates, enums and ranges", () => {
     const cases: [{ safeParse(value: unknown): { success: boolean } }, string[], string[]][] = [
       [paymentMethodSchema, ["CASH", "CARD", "MIXED"], ["cash", "CHEQUE", ""]],
       [cashMovementTypeSchema, ["IN", "OUT"], ["OPENING", "in", ""]],
-      [diningTableStatusSchema, ["FREE", "OCCUPIED"], ["free", "RESERVED"]],
       [roleSchema, ["OWNER", "MANAGER", "CASHIER"], ["ADMIN", "owner"]],
     ];
     for (const [schema, valid, invalid] of cases) {

@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   cashMovementTypeSchema,
   dashboardPeriodSchema,
-  diningTableStatusSchema,
   emailSchema,
   idSchema,
   moneyAmountSchema,
@@ -77,10 +76,18 @@ export const checkoutItemSchema = z.strictObject({
 export const checkoutBodySchema = z
   .strictObject({
     tableId: idSchema.nullish(),
+    /**
+     * ORD-04/ORD-05: pay a ticket that already exists. When present, the
+     * sale's contents come from that ticket's persisted lines and `items`
+     * is not read at all — the ticket in the database is the truth, not
+     * whatever the browser still had in memory. Without it, this is a
+     * direct sale and `items` describes it (ORD-07 folds the two together).
+     */
+    orderId: idSchema.optional(),
     items: z
       .array(checkoutItemSchema, { error: "Ajoutez au moins un article." })
-      .min(1, { error: "Ajoutez au moins un article." })
-      .max(200, { error: "Une commande ne peut pas dépasser 200 lignes." }),
+      .max(200, { error: "Une commande ne peut pas dépasser 200 lignes." })
+      .optional(),
     paymentMethod: paymentMethodSchema,
     cashAmount: moneyAmountSchema.optional(),
     cardAmount: moneyAmountSchema.optional(),
@@ -88,6 +95,14 @@ export const checkoutBodySchema = z
   .superRefine((body, ctx) => {
     const cash = body.cashAmount ?? 0;
     const card = body.cardAmount ?? 0;
+
+    if (body.orderId === undefined && (body.items === undefined || body.items.length === 0)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["items"],
+        message: "Ajoutez au moins un article.",
+      });
+    }
 
     if (body.paymentMethod === "CASH" && card !== 0) {
       ctx.addIssue({
@@ -158,15 +173,55 @@ export const createDiningTableSchema = z.strictObject({
 });
 export type CreateDiningTableBody = z.infer<typeof createDiningTableSchema>;
 
-export const updateDiningTableSchema = z
-  .strictObject({
-    name: shortTextSchema(100, "Le nom de la table").optional(),
-    status: diningTableStatusSchema.optional(),
-  })
-  .refine((body) => body.name !== undefined || body.status !== undefined, {
-    error: "Indiquez au moins un champ à modifier (name ou status).",
-  });
+/**
+ * ORD-03: `status` is gone. Occupancy is derived from the table's open
+ * ticket (migration 0011 dropped the column), so the only thing left to
+ * change about a table is its name — floor-plan configuration, not service
+ * activity.
+ */
+export const updateDiningTableSchema = z.strictObject({
+  name: shortTextSchema(100, "Le nom de la table"),
+});
 export type UpdateDiningTableBody = z.infer<typeof updateDiningTableSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Open tickets (ORD-02 / ORD-04 / ORD-05)                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Opening a ticket. `tableId: null` is a counter sale, which ORD-07 will
+ * fold into the same journey as the table flow.
+ */
+export const openTicketSchema = z.strictObject({
+  tableId: idSchema.nullish(),
+});
+export type OpenTicketBody = z.infer<typeof openTicketSchema>;
+
+export const ticketItemSchema = z.strictObject({
+  productId: idSchema,
+  quantity: quantitySchema,
+  notes: noteSchema.nullish(),
+});
+
+/**
+ * Saving a ticket's contents. `version` is not optional and has no default:
+ * ORD-05's guarantee is that a device writes against the state it actually
+ * read, and a missing version would have to be interpreted as "whatever is
+ * current", which is precisely the silent overwrite DEC-08 rules out.
+ *
+ * An empty `items` array is valid — emptying a ticket is a real action, and
+ * refusing it would leave a cashier unable to undo their last line.
+ */
+export const saveTicketItemsSchema = z.strictObject({
+  version: z
+    .number({ error: "Version du ticket manquante." })
+    .int({ error: "Version du ticket invalide." })
+    .min(1, { error: "Version du ticket invalide." }),
+  items: z
+    .array(ticketItemSchema, { error: "Liste d'articles invalide." })
+    .max(200, { error: "Un ticket ne peut pas dépasser 200 lignes." }),
+});
+export type SaveTicketItemsBody = z.infer<typeof saveTicketItemsSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Cash                                                                       */

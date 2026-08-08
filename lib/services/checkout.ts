@@ -1,12 +1,13 @@
+import type { PoolClient } from "pg";
 import { withTransaction } from "../db";
-import { NotFoundError, ValidationError } from "../errors";
+import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
 import { extractTaxCents, fromCents, toCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
 import { nextOrderNumber } from "../repositories/orders";
 import { recordCharge } from "../repositories/payments";
 import { lockProductsForSale } from "../repositories/products";
-import { setDiningTableStatus } from "../repositories/tables";
+import { listTicketItems, lockTicket, type TicketItemRow } from "../repositories/tickets";
 import { decrementStockAtomically } from "./stock";
 import type { RequestContext } from "../context";
 import type { PaymentMethod } from "../validation/primitives";
@@ -34,6 +35,14 @@ export interface CheckoutResult {
   total: number;
 }
 
+/** What callers hand in: `notes` may be absent, null, or text. */
+export interface CheckoutLineInput {
+  productId: number;
+  quantity: number;
+  notes?: string | null;
+}
+
+/** What comes back out: one line per product, `notes` normalised to text or null. */
 export interface MergedItem {
   productId: number;
   quantity: number;
@@ -59,7 +68,7 @@ export interface MergedItem {
  *
  * Notes from merged lines are joined so none is silently dropped.
  */
-export function mergeItemsByProduct(items: CheckoutBody["items"]): MergedItem[] {
+export function mergeItemsByProduct(items: readonly CheckoutLineInput[]): MergedItem[] {
   const merged = new Map<number, MergedItem>();
 
   for (const item of items) {
@@ -117,6 +126,35 @@ function resolvePaymentSplit(
 }
 
 /**
+ * Locks an existing ticket and returns its persisted lines, refusing
+ * anything that is not an open ticket of this establishment.
+ *
+ * The `FOR UPDATE` matters as much as the status check: it holds the row for
+ * the rest of the transaction, so two devices paying the same ticket at once
+ * serialize here, and the second one finds it already `PAID` instead of
+ * charging the customer twice. Idempotency (API-02) covers a retry of the
+ * *same* request; this covers two genuinely different ones.
+ */
+async function lockOpenTicketForPayment(
+  client: PoolClient,
+  locationId: number,
+  orderId: number,
+): Promise<{ id: number; items: TicketItemRow[] }> {
+  const locked = await lockTicket(client, locationId, orderId);
+  if (!locked) {
+    throw new NotFoundError("Ticket introuvable.");
+  }
+  if (locked.status !== "OPEN") {
+    throw new ConflictError(
+      locked.status === "PAID"
+        ? "Ce ticket a déjà été encaissé."
+        : "Ce ticket a été annulé et ne peut plus être encaissé.",
+    );
+  }
+  return { id: locked.id, items: await listTicketItems(client, orderId) };
+}
+
+/**
  * SALE-03: the canonical, server-computed checkout — subtotal, tax, total,
  * payments and stock movements, all in one transaction. Replaces the
  * prototype flow this module carried since FND-08/API-02, and with it
@@ -124,10 +162,12 @@ function resolvePaymentSplit(
  * has no fallback branch, every payment method resolves to exactly one
  * pair of amounts.
  *
- * Still creates the order directly as `PAID`, with no persisted `OPEN`
- * step — true since before ORD-01 (see that task's note in git history),
- * unchanged here; ORD-02 is what gives orders a real `OPEN` state to pass
- * through first.
+ * Two ways in since ORD-04. With an `orderId`, this pays a ticket that has
+ * been sitting `OPEN` on a table — its lines come from the database and the
+ * row transitions in place. Without one, it is a counter sale and the order
+ * is created `PAID` outright, the only path that existed before ORD-02.
+ * ORD-07 folds the second into the first, so every sale passes through a
+ * real `OPEN` state.
  */
 export async function performCheckout(
   context: RequestContext,
@@ -137,9 +177,28 @@ export async function performCheckout(
   // checkoutBodySchema (API-01), before this function — and therefore before
   // the database — is reached at all. `input` is the schema's output type,
   // so ids, quantities and amounts are already known-good here.
-  const mergedItems = mergeItemsByProduct(input.items);
-
   return withTransaction(async (client) => {
+    // ORD-04/ORD-05: paying an existing ticket takes its contents from the
+    // database, never from the request. The browser may have been open for
+    // an hour, or another device may have added a round since — the ticket
+    // row is what the customer is being charged for.
+    const ticket = input.orderId
+      ? await lockOpenTicketForPayment(client, context.locationId, input.orderId)
+      : null;
+
+    const mergedItems = mergeItemsByProduct(
+      ticket
+        ? ticket.items.map((item) => ({
+            productId: item.product_id,
+            quantity: item.quantity,
+            notes: item.notes,
+          }))
+        : (input.items ?? []),
+    );
+    if (mergedItems.length === 0) {
+      throw new ValidationError("Ajoutez au moins un article avant d'encaisser.");
+    }
+
     const productIds = mergedItems.map((item) => item.productId);
     const pricing = await lockProductsForSale(client, context.locationId, productIds);
     const pricingById = new Map(pricing.map((row) => [row.id, row]));
@@ -182,32 +241,63 @@ export async function performCheckout(
       throw new ValidationError("Aucune journée de caisse ouverte.");
     }
 
-    // Consumed inside this same transaction: if the checkout later rolls
-    // back (e.g. the stock check below throws), the number is never
-    // committed to an order and the counter simply has a gap, which
-    // nextOrderNumber's own doc comment explains is an accepted trade-off.
-    const orderNumber = await nextOrderNumber(client, context.locationId);
-
-    const {
-      rows: [order],
-    } = await client.query<CheckoutOrderResult>(
-      `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, paid_at)
-       VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, $10, $11, now())
-       RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
-      [
-        context.locationId,
-        input.tableId,
-        businessDay.id,
-        orderNumber,
-        context.userId,
-        input.paymentMethod,
-        fromCents(cashCents),
-        fromCents(cardCents),
-        fromCents(subtotalCents),
-        fromCents(taxCents),
-        fromCents(totalCents),
-      ],
-    );
+    // An existing ticket already holds its number and lines; a direct sale
+    // creates both here. Consumed inside this same transaction: if the
+    // checkout later rolls back (e.g. the stock check below throws), the
+    // number is never committed to an order and the counter simply has a
+    // gap, which nextOrderNumber's own doc comment explains is an accepted
+    // trade-off.
+    let order: CheckoutOrderResult;
+    if (ticket) {
+      // OPEN -> PAID. An UPDATE guarded on the status the row was locked
+      // with, rather than a second INSERT: the ticket keeps its identity,
+      // its number and the moment it was opened, so the floor plan frees
+      // the table by the same fact that records the sale (ORD-03).
+      const { rows } = await client.query<CheckoutOrderResult>(
+        `UPDATE orders
+         SET status = 'PAID', payment_method = $3, cash_amount = $4, card_amount = $5,
+             subtotal_amount = $6, tax_amount = $7, total_amount = $8,
+             business_day_id = COALESCE(business_day_id, $9), paid_at = now(), version = version + 1
+         WHERE location_id = $1 AND id = $2 AND status = 'OPEN'
+         RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
+        [
+          context.locationId,
+          ticket.id,
+          input.paymentMethod,
+          fromCents(cashCents),
+          fromCents(cardCents),
+          fromCents(subtotalCents),
+          fromCents(taxCents),
+          fromCents(totalCents),
+          businessDay.id,
+        ],
+      );
+      order = rows[0];
+      // The lines are already there and already priced; rewrite them so the
+      // stored unit prices match what was just charged.
+      await client.query("DELETE FROM order_items WHERE order_id = $1", [order.id]);
+    } else {
+      const orderNumber = await nextOrderNumber(client, context.locationId);
+      const { rows } = await client.query<CheckoutOrderResult>(
+        `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, paid_at)
+         VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, $10, $11, now())
+         RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
+        [
+          context.locationId,
+          input.tableId,
+          businessDay.id,
+          orderNumber,
+          context.userId,
+          input.paymentMethod,
+          fromCents(cashCents),
+          fromCents(cardCents),
+          fromCents(subtotalCents),
+          fromCents(taxCents),
+          fromCents(totalCents),
+        ],
+      );
+      order = rows[0];
+    }
 
     for (const item of resolvedItems) {
       await client.query(
@@ -253,9 +343,10 @@ export async function performCheckout(
       });
     }
 
-    if (input.tableId) {
-      await setDiningTableStatus(client, context.locationId, input.tableId, "FREE");
-    }
+    // ORD-03: nothing to free. The table was occupied because it carried an
+    // OPEN order; that order is now PAID, so the floor plan already reads as
+    // free on its next query. There is no second write to forget, and no
+    // window in which the two could disagree.
 
     await recordAuditEvent(client, {
       locationId: context.locationId,

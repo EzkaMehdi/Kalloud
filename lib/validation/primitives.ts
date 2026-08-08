@@ -2,7 +2,6 @@ import { z } from "zod";
 import { ROLES, type Role } from "../authz";
 import { toCents } from "../money";
 import type { CashMovementType } from "../repositories/cash-movements";
-import type { DiningTableStatus } from "../repositories/tables";
 
 /**
  * API-01: the reusable building blocks every request schema is assembled
@@ -184,13 +183,10 @@ export const cashMovementTypeSchema = z.enum(CASH_MOVEMENT_TYPES, {
   error: 'Type de mouvement invalide (attendu "IN" ou "OUT").',
 });
 
-export const DINING_TABLE_STATUSES = [
-  "FREE",
-  "OCCUPIED",
-] as const satisfies readonly DiningTableStatus[];
-export const diningTableStatusSchema = z.enum(DINING_TABLE_STATUSES, {
-  error: 'Statut de table invalide (attendu "FREE" ou "OCCUPIED").',
-});
+// A dining-table status enum used to live here. ORD-03 removed the stored
+// column entirely — occupancy is derived from the table's open ticket — so
+// there is no such value for a client to send any more, and validating one
+// would only keep alive an input the API no longer accepts.
 
 export const roleSchema = z.enum(ROLES as readonly [Role, ...Role[]], {
   error: "Rôle invalide.",

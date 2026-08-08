@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CatalogProduct {
   id: number;
@@ -43,7 +44,7 @@ test.describe("SALE-04: the order drawer loads the real, scoped catalog", () => 
     expect(created.ok(), "creating the test's own isolated product must succeed").toBeTruthy();
     const product: CatalogProduct = await created.json();
 
-    await page.getByRole("button", { name: /table 1/i }).click();
+    await openOwnTable(page);
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
 

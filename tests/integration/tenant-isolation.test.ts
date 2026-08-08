@@ -14,7 +14,6 @@ import {
   createDiningTable,
   listDiningTables,
   renameDiningTable,
-  setDiningTableStatus,
 } from "../../lib/repositories/tables";
 import {
   closeBusinessDay,
@@ -26,6 +25,7 @@ import { createCashMovement, listCashMovements } from "../../lib/repositories/ca
 import { getLocationSettings, listTaxClasses } from "../../lib/repositories/settings";
 import { listOrders } from "../../lib/repositories/orders";
 import { performCheckout } from "../../lib/services/checkout";
+import { openOrResumeTableTicket } from "../../lib/services/tickets";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
@@ -139,19 +139,43 @@ describe("SEC-08: floor plan isolation", () => {
     expect(tablesA.find((t) => t.id === tableB.id)).toBeUndefined();
   });
 
-  it("refuses to rename or change the status of another tenant's table", async () => {
+  it("refuses to rename another tenant's table", async () => {
+    // ORD-03 removed the stored FREE/OCCUPIED status, so renaming is the
+    // only mutation a table still has; occupancy is derived from its open
+    // ticket, and the cross-tenant case for that is covered below.
     const tableB = await createDiningTable(pool, tenantB.locationId, "B1");
 
     await expect(
       renameDiningTable(pool, tenantA.locationId, tableB.id, "Stolen"),
     ).rejects.toBeInstanceOf(NotFoundError);
-    await expect(
-      setDiningTableStatus(pool, tenantA.locationId, tableB.id, "OCCUPIED"),
-    ).rejects.toBeInstanceOf(NotFoundError);
 
     const [row] = await listDiningTables(pool, tenantB.locationId);
     expect(row.name).toBe("B1");
-    expect(row.status).toBe("FREE");
+    expect(row.is_occupied).toBe(false);
+  });
+
+  it("never reports a table as occupied because of another tenant's ticket", async () => {
+    const tableA = await createDiningTable(pool, tenantA.locationId, "A1");
+    const tableB = await createDiningTable(pool, tenantB.locationId, "B1");
+    await openBusinessDay(pool, tenantB.locationId, "100.00");
+    const ownerB = await createTestUser(pool, tenantB, "OWNER");
+    await openOrResumeTableTicket(
+      {
+        userId: ownerB.userId,
+        userEmail: ownerB.email,
+        userName: "Owner B",
+        organizationId: tenantB.organizationId,
+        locationId: tenantB.locationId,
+        role: "OWNER",
+        sessionId: 1,
+      },
+      tableB.id,
+    );
+
+    const tablesA = await listDiningTables(pool, tenantA.locationId);
+    expect(tablesA.find((row) => row.id === tableA.id)?.is_occupied).toBe(false);
+    const tablesB = await listDiningTables(pool, tenantB.locationId);
+    expect(tablesB.find((row) => row.id === tableB.id)?.is_occupied).toBe(true);
   });
 });
 

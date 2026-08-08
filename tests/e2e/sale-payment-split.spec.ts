@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { openOwnTable } from "./helpers/floor";
 
 interface CheckoutResponse {
   order: { cash_amount: string; card_amount: string };
@@ -44,7 +45,7 @@ async function createProduct(request: APIRequestContext, price: string): Promise
 
 async function openTicketWithProduct(page: Page, product: CreatedProduct) {
   await page.goto("/caisse");
-  await page.getByRole("button", { name: /table 1/i }).click();
+  await openOwnTable(page);
   const dialog = page.getByRole("dialog");
   const escaped = product.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   await dialog.getByRole("button", { name: new RegExp(escaped) }).click();

@@ -268,6 +268,61 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
   });
 });
 
+describe("SALE-09: MIXED at a non-round, floating-point-prone total (audit gap)", () => {
+  // Every MIXED test elsewhere (this file, sale-payment-split.spec.ts) uses
+  // round totals — 20.00, split 12.00/8.00. resolvePaymentSplit's own check
+  // (lib/services/checkout.ts) is an exact cents equality with zero
+  // tolerance, and DEC-05's whole point is that 0.1 + 0.2 !== 0.3 in binary
+  // floating point; nothing until now exercised that comparison against a
+  // total money.ts itself cannot represent exactly as a float (9.99), only
+  // against ones that happen not to trigger the drift.
+  it("accepts a split that sums correctly in cents against an odd-cent total", async () => {
+    const product = await createProduct(pool, tenant.locationId, {
+      categoryId: null,
+      name: "Thé",
+      price: "3.33",
+      stockQuantity: 10,
+    });
+
+    const { order } = await performCheckout(
+      context,
+      checkoutBody({
+        items: [{ productId: product.id, quantity: 3 }], // total: 9.99
+        paymentMethod: "MIXED",
+        cashAmount: "4.99",
+        cardAmount: "5.00",
+      }),
+    );
+
+    expect(order.total_amount).toBe("9.99");
+    expect(order.cash_amount).toBe("4.99");
+    expect(order.card_amount).toBe("5.00");
+  });
+
+  it("refuses the same odd-cent total when the split is off by a single cent", async () => {
+    const product = await createProduct(pool, tenant.locationId, {
+      categoryId: null,
+      name: "Thé",
+      price: "3.33",
+      stockQuantity: 10,
+    });
+
+    await expect(
+      performCheckout(
+        context,
+        checkoutBody({
+          items: [{ productId: product.id, quantity: 3 }], // total: 9.99
+          paymentMethod: "MIXED",
+          cashAmount: "5.00",
+          cardAmount: "5.00", // sums to 10.00, one cent over
+        }),
+      ),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    expect(await listOrders(pool, tenant.locationId)).toHaveLength(0);
+  });
+});
+
 describe("SALE-03: stock movements, not just the materialized column (closing STK-01's gap)", () => {
   it("records a SALE stock movement matching the decrement, staying equal to the ledger", async () => {
     // createProductWithInitialStock (STK-02), not createProduct directly:

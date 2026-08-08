@@ -26,6 +26,18 @@ export interface OrderListRow {
   refunded_at: string | null;
 }
 
+/**
+ * The establishment's sales history: orders that have reached a terminal
+ * state.
+ *
+ * `OPEN` tickets are excluded deliberately. Before ORD-02 no order could be
+ * open, so listing every status was harmless; now a ticket being typed at a
+ * table would appear in the Bilan's "dernières commandes" — a running total
+ * with no payment method, sitting among real sales, under a heading that
+ * says "encaissée". A ticket in progress is not history. ORD-12 replaces
+ * this with the filterable, paginated endpoint the screen actually wants;
+ * until then the filter belongs here, where the query is.
+ */
 export async function listOrders(
   db: Queryable,
   locationId: number,
@@ -37,7 +49,7 @@ export async function listOrders(
             o.created_by, o.notes, o.created_at, o.paid_at, o.cancelled_at, o.refunded_at
      FROM orders o
      LEFT JOIN dining_tables t ON t.id = o.table_id
-     WHERE o.location_id = $1
+     WHERE o.location_id = $1 AND o.status <> 'OPEN'
      ORDER BY o.created_at DESC
      LIMIT $2`,
     [locationId, limit],

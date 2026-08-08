@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../lib/db";
 import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors";
 import { withIdempotency } from "../../lib/idempotency";
-import { openBusinessDay } from "../../lib/repositories/business-days";
+import {
+  getActiveBusinessDay,
+  getBusinessDaySummary,
+  openBusinessDay,
+} from "../../lib/repositories/business-days";
+import { getCashBalance } from "../../lib/repositories/cash-movements";
 import { listOrders } from "../../lib/repositories/orders";
 import { createProduct, listProducts, type ProductRow } from "../../lib/repositories/products";
 import { createDiningTable, listDiningTables } from "../../lib/repositories/tables";
@@ -400,6 +405,55 @@ describe("ORD-04: paying a ticket charges what the ticket holds", () => {
     expect(first.replayed).toBe(false);
     expect(retry.replayed).toBe(true);
     expect(await listOrders(pool, tenant.locationId)).toHaveLength(1);
+  });
+});
+
+describe("ORD-02: an open ticket is not sales history", () => {
+  it("keeps a ticket in progress out of the orders list until it is paid", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+
+    // The Bilan reads this list under a "commandes encaissées" heading; a
+    // running total with no payment method has no business appearing there.
+    expect(await listOrders(pool, tenant.locationId)).toHaveLength(0);
+
+    await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: ticket.id, paymentMethod: "CARD" }),
+    );
+    const history = await listOrders(pool, tenant.locationId);
+    expect(history).toHaveLength(1);
+    expect(history[0].status).toBe("PAID");
+  });
+
+  it("leaves every money figure untouched while a ticket is only open", async () => {
+    const day = await getActiveBusinessDay(pool, tenant.locationId);
+    const cashBefore = await getCashBalance(pool, tenant.locationId, day!.id);
+
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 4 }],
+    });
+
+    // Revenue is recognised at payment, not at ordering: a 10 € ticket
+    // sitting on a table must move nothing.
+    const summary = await getBusinessDaySummary(pool, tenant.locationId, day!.id);
+    expect(summary.revenue).toBe("0.00");
+    expect(summary.orders_count).toBe(0);
+    expect(await getCashBalance(pool, tenant.locationId, day!.id)).toBe(cashBefore);
+
+    // And it does move once the ticket is paid in cash.
+    await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: ticket.id, paymentMethod: "CASH" }),
+    );
+    const paidSummary = await getBusinessDaySummary(pool, tenant.locationId, day!.id);
+    expect(paidSummary.revenue).toBe("10.00");
+    expect(paidSummary.cash_revenue).toBe("10.00");
   });
 });
 

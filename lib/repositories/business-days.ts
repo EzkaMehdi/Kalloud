@@ -35,14 +35,34 @@ export async function getBusinessDaySummary(
   locationId: number,
   businessDayId: number,
 ): Promise<BusinessDaySummary> {
+  // ORD-10/DEC-09: computed from the payments ledger, not from the orders'
+  // inline amounts. "CA net = SUM(commandes PAID.total) − SUM(remboursements)"
+  // cannot be read off `orders.total_amount`, which keeps the amount
+  // originally charged for the whole life of the sale — a refunded order
+  // still carries its full total, by design (nothing is ever rewritten).
+  // Netting CHARGE against REFUND is the only place that arithmetic is true.
   const { rows } = await db.query<BusinessDaySummary>(
-    `SELECT COALESCE(SUM(total_amount), 0)::DECIMAL(10, 2) AS revenue,
-            COALESCE(SUM(cash_amount), 0)::DECIMAL(10, 2) AS cash_revenue,
-            COALESCE(SUM(card_amount), 0)::DECIMAL(10, 2) AS card_revenue,
-            COUNT(*)::INT AS orders_count,
-            COALESCE(AVG(total_amount), 0)::DECIMAL(10, 2) AS average_basket
-     FROM orders
-     WHERE status = 'PAID' AND location_id = $1 AND business_day_id = $2`,
+    `WITH net AS (
+       SELECT p.method,
+              SUM(CASE WHEN p.type = 'CHARGE' THEN p.amount ELSE -p.amount END) AS amount
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
+       WHERE o.location_id = $1 AND o.business_day_id = $2
+       GROUP BY p.method
+     ),
+     counted AS (
+       SELECT COUNT(*)::INT AS orders_count
+       FROM orders
+       WHERE location_id = $1 AND business_day_id = $2 AND status IN ('PAID', 'REFUNDED')
+     )
+     SELECT COALESCE((SELECT SUM(amount) FROM net), 0)::DECIMAL(10, 2) AS revenue,
+            COALESCE((SELECT amount FROM net WHERE method = 'CASH'), 0)::DECIMAL(10, 2) AS cash_revenue,
+            COALESCE((SELECT amount FROM net WHERE method = 'CARD'), 0)::DECIMAL(10, 2) AS card_revenue,
+            (SELECT orders_count FROM counted) AS orders_count,
+            CASE
+              WHEN (SELECT orders_count FROM counted) = 0 THEN 0
+              ELSE COALESCE((SELECT SUM(amount) FROM net), 0) / (SELECT orders_count FROM counted)
+            END::DECIMAL(10, 2) AS average_basket`,
     [locationId, businessDayId],
   );
   return rows[0];
@@ -55,13 +75,32 @@ export async function getRevenueBetween(
   to: Date,
 ): Promise<BusinessDaySummary> {
   const { rows } = await db.query<BusinessDaySummary>(
-    `SELECT COALESCE(SUM(total_amount), 0)::DECIMAL(10, 2) AS revenue,
-            COALESCE(SUM(cash_amount), 0)::DECIMAL(10, 2) AS cash_revenue,
-            COALESCE(SUM(card_amount), 0)::DECIMAL(10, 2) AS card_revenue,
-            COUNT(*)::INT AS orders_count,
-            COALESCE(AVG(total_amount), 0)::DECIMAL(10, 2) AS average_basket
-     FROM orders
-     WHERE status = 'PAID' AND location_id = $1 AND paid_at >= $2 AND paid_at < $3`,
+    // Same netting as getBusinessDaySummary, over a date range. Payments are
+    // attributed to the period their order was paid in, not the moment the
+    // refund happened: a sale refunded next week belongs to this week's
+    // figures, reduced.
+    `WITH net AS (
+       SELECT p.method,
+              SUM(CASE WHEN p.type = 'CHARGE' THEN p.amount ELSE -p.amount END) AS amount
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
+       WHERE o.location_id = $1 AND o.paid_at >= $2 AND o.paid_at < $3
+       GROUP BY p.method
+     ),
+     counted AS (
+       SELECT COUNT(*)::INT AS orders_count
+       FROM orders
+       WHERE location_id = $1 AND paid_at >= $2 AND paid_at < $3
+         AND status IN ('PAID', 'REFUNDED')
+     )
+     SELECT COALESCE((SELECT SUM(amount) FROM net), 0)::DECIMAL(10, 2) AS revenue,
+            COALESCE((SELECT amount FROM net WHERE method = 'CASH'), 0)::DECIMAL(10, 2) AS cash_revenue,
+            COALESCE((SELECT amount FROM net WHERE method = 'CARD'), 0)::DECIMAL(10, 2) AS card_revenue,
+            (SELECT orders_count FROM counted) AS orders_count,
+            CASE
+              WHEN (SELECT orders_count FROM counted) = 0 THEN 0
+              ELSE COALESCE((SELECT SUM(amount) FROM net), 0) / (SELECT orders_count FROM counted)
+            END::DECIMAL(10, 2) AS average_basket`,
     [locationId, from, to],
   );
   return rows[0];

@@ -259,6 +259,20 @@ export async function listOpenCounterTickets(
   return rows;
 }
 
+/** ORD-08: stores the order's own note. `null` clears it. */
+export async function setTicketNotes(
+  db: Queryable,
+  locationId: number,
+  orderId: number,
+  notes: string | null,
+): Promise<void> {
+  await db.query("UPDATE orders SET notes = $3 WHERE location_id = $1 AND id = $2", [
+    locationId,
+    orderId,
+    notes,
+  ]);
+}
+
 /** Recomputes and stores the running total from the ticket's own lines. */
 export async function refreshTicketTotal(
   db: Queryable,

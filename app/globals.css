@@ -1116,3 +1116,32 @@ dialog.sheet::backdrop {
   color: #2f6b43;
   line-height: 1.5;
 }
+
+/* ORD-09: the receipt's header line. */
+.receipt-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.receipt-head small {
+  display: block;
+  color: #6b7a71;
+  font-size: 12px;
+}
+/* The history row became a button (it opens the receipt) — keep it looking
+   like the row it always was rather than like a control. */
+button.order-row {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+button.order-row:hover {
+  background: #f6f8f7;
+}

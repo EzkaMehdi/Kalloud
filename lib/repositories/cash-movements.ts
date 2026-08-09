@@ -74,7 +74,14 @@ export async function getCashBalance(
           FROM cash_movements WHERE location_id = $1 AND business_day_id = $2),
          0
        ) + COALESCE(
-         (SELECT SUM(cash_amount) FROM orders WHERE status = 'PAID' AND location_id = $1 AND business_day_id = $2),
+         -- ORD-10/DEC-09: "les ventes nettes intègrent les remboursements
+         -- espèces". Read from the payments ledger, because a refunded
+         -- order keeps its original cash_amount — the money handed back is
+         -- a REFUND line, not a rewrite of what was taken.
+         (SELECT SUM(CASE WHEN p.type = 'CHARGE' THEN p.amount ELSE -p.amount END)
+          FROM payments p
+          JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
+          WHERE p.method = 'CASH' AND o.location_id = $1 AND o.business_day_id = $2),
          0
        )
      )::DECIMAL(10, 2) AS balance`,

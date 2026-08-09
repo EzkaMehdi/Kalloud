@@ -16,6 +16,7 @@ import {
   lockTicket,
   refreshTicketTotal,
   replaceTicketItems,
+  setTicketNotes,
   type Ticket,
 } from "../repositories/tickets";
 import type { RequestContext } from "../context";
@@ -199,6 +200,12 @@ export async function saveTicketItems(
     }
 
     await replaceTicketItems(client, orderId, priced);
+    // ORD-08: `undefined` leaves the note alone (a save that only touches
+    // lines), `null` clears it. Distinguishing the two is why the schema
+    // makes this nullish rather than optional.
+    if (input.notes !== undefined) {
+      await setTicketNotes(client, context.locationId, orderId, input.notes?.trim() || null);
+    }
     // Bumped after the write, inside the same transaction: a caller whose
     // version is stale never reaches this, because the UPDATE matches no row
     // and the whole transaction rolls back with its line changes.

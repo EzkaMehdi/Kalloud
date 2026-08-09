@@ -618,23 +618,27 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Acceptation : aucun doublon conceptuel et historique clairement identifiable.
   - Mise en œuvre : le corps d'un encaissement ne porte plus que `orderId`. La branche « créer une commande payée directement » est supprimée : c'était le seul moyen qu'une commande atteigne `PAID` sans avoir été `OPEN`. Une vente au comptoir est un ticket sans table, identifiable comme telle en historique, et `GET /api/tickets` la rend joignable — sans quoi elle devenait invisible dès la fermeture du tiroir.
 
-- [ ] **`ORD-08` — Ajouter auteur et notes**
+- [x] **`ORD-08` — Ajouter auteur et notes**
   - Priorité : `P1`
   - Dépend de : `ORD-02`, `SEC-04`
   - Livrable : serveur responsable, notes de commande et historique des modifications utiles.
   - Acceptation : le gérant peut identifier l’auteur d’une opération.
+  - Mise en œuvre : l'auteur est résolu en **nom** et non en identifiant, et figure sur le justificatif. La note de commande se sauvegarde avec les lignes et contre la même version (`null` efface, absent laisse tel quel). L'audit porte déjà l'acteur sur l'ouverture, l'annulation, l'encaissement et le remboursement.
 
-- [ ] **`ORD-09` — Générer numéro de commande et justificatif**
+- [x] **`ORD-09` — Générer numéro de commande et justificatif**
   - Priorité : `P0`
   - Dépend de : `ORD-01`, `SALE-03`, `DEC-05`
   - Livrable : numéro unique, détail articles, paiements, taxes et date.
   - Acceptation : justificatif cohérent avec les montants persistés.
+  - Mise en œuvre : `GET /api/orders/:id/receipt`, ouvert depuis l'historique du Bilan. Le taux de TVA est figé **par ligne** à l'encaissement (migration 0013), sans quoi la ventilation par taux exigée par `DEC-05` se recalculerait au taux du jour pour une vente ancienne. Rien n'est recalculé depuis le catalogue : un test change le prix du produit après la vente et vérifie que le justificatif ne bouge pas.
 
-- [ ] **`ORD-10` — Implémenter annulation financière et remboursement**
+- [x] **`ORD-10` — Implémenter annulation financière et remboursement**
   - Priorité : `P0`
   - Dépend de : `ORD-09`, `SALE-03`, `SEC-05`, `SEC-09`
   - Livrable : enregistrement `refund`, ligne de paiement `REFUND`, remboursement total/partiel selon décision, motif et permission manager.
   - Acceptation : aucune suppression de vente ; effets sur paiement net, espèces, taxes et stock explicitement compensés.
+  - Mise en œuvre : `POST /api/orders/:id/refund`, permission `orders:refund`, clé d'idempotence obligatoire — un remboursement déplace de l'argent. Chaque ligne `REFUND` est rattachée au `CHARGE` qu'elle inverse ; les charges d'origine ne sont jamais modifiées. Total ou partiel selon `DEC-03` : seul un remboursement couvrant tout le solde fait passer la commande en `REFUNDED`. Le CA net et les espèces attendues sont recalculés depuis le **registre des paiements** et non depuis `orders.total_amount`, qui conserve le montant d'origine par construction.
+  - Limite assumée : le stock n'est rendu que sur un remboursement **total**. Un remboursement partiel est un montant, pas une liste d'articles — rien ne dit quels produits sont revenus, et inscrire une supposition au ledger corromprait le seul chiffre que l'écran de stock existe pour énoncer.
 
 - [ ] **`ORD-11` — Implémenter les remises encadrées**
   - Priorité : `P1`

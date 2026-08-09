@@ -212,6 +212,16 @@ export const saveTicketItemsSchema = z.strictObject({
   items: z
     .array(ticketItemSchema, { error: "Liste d'articles invalide." })
     .max(200, { error: "Un ticket ne peut pas dépasser 200 lignes." }),
+  /**
+   * ORD-08: the order's own note ("sans oignons", "table pressée"). Saved
+   * with the lines and against the same version, because it is part of the
+   * same ticket state — a separate endpoint would let two devices write a
+   * note and a line list that never coexisted.
+   *
+   * `null` clears it, which is why this is nullish rather than optional:
+   * "absent" and "emptied" are different intents.
+   */
+  notes: noteSchema.nullish(),
 });
 export type SaveTicketItemsBody = z.infer<typeof saveTicketItemsSchema>;
 
@@ -279,3 +289,21 @@ export const dashboardQuerySchema = z.object({
     .optional(),
 });
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Refunds (ORD-10)                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ORD-10/DEC-05: a refund is "toujours associé à un motif", so the reason is
+ * required here exactly as it is for a cancellation.
+ *
+ * `amount` is optional and means "everything still owed on this order" when
+ * absent — the common case, and one the client should not have to compute
+ * from figures the server already holds, at the risk of being a cent off.
+ */
+export const refundOrderSchema = z.strictObject({
+  reason: shortTextSchema(255, "Le motif du remboursement"),
+  amount: moneyAmountSchema.optional(),
+});
+export type RefundOrderBody = z.infer<typeof refundOrderSchema>;

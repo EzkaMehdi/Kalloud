@@ -3,8 +3,10 @@
 import { useMemo, useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
+import { ReceiptDialog } from "@/components/receipt-dialog";
 import { apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
+import { useCurrentUser } from "@/lib/client/use-current-user";
 
 interface DashboardStats {
   revenue: string;
@@ -16,13 +18,25 @@ interface DashboardStats {
 
 interface OrderRow {
   id: number;
+  order_number: number;
   table_name: string | null;
   status: string;
   payment_method: string | null;
   total_amount: string;
   created_at: string;
-  closed_at: string | null;
+  // ORD-01 renamed `closed_at`; a paid order carries `paid_at`, a cancelled
+  // one `cancelled_at`. Reading the old name silently fell back to the
+  // creation time on every row.
+  paid_at: string | null;
+  cancelled_at: string | null;
 }
+
+/** UX-06: the vocabulary DEC-03 fixed, shown rather than the raw enum. */
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  PAID: "Encaissée",
+  CANCELLED: "Annulée",
+  REFUNDED: "Remboursée",
+};
 
 interface CashMovementRow {
   id: number;
@@ -52,6 +66,12 @@ const PAYMENT_LABELS: Record<string, string> = { CASH: "Espèces", CARD: "CB", M
 export default function Bilan() {
   const now = useMemo(() => new Date(), []);
   const years = useMemo(() => [now.getFullYear(), now.getFullYear() - 1], [now]);
+
+  const [receiptOrderId, setReceiptOrderId] = useState<number | null>(null);
+  const user = useCurrentUser();
+  // DEC-07: `orders:refund` is OWNER/MANAGER. A cashier still sees the
+  // receipt — they hand it to the customer — but not the refund action.
+  const canRefund = user?.role === "OWNER" || user?.role === "MANAGER";
 
   const [period, setPeriod] = useState<"Aujourd’hui" | "Ce mois" | "Cette année">("Aujourd’hui");
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -177,16 +197,29 @@ export default function Bilan() {
         {(orders) => (
           <div className="history-card">
             {orders.slice(0, 8).map((order) => (
-              <div className="order-row" key={order.id}>
+              // ORD-09: the row opens the receipt. A history you cannot open
+              // is a list of numbers with nothing behind them.
+              <button
+                type="button"
+                className="order-row"
+                key={order.id}
+                onClick={() => setReceiptOrderId(order.id)}
+              >
                 <div>
-                  <b>{order.table_name ?? "Vente directe"}</b>
+                  <b>
+                    #{order.order_number} · {order.table_name ?? "Vente directe"}
+                  </b>
                   <small>
-                    {dateFormatter.format(new Date(order.closed_at ?? order.created_at))} ·{" "}
-                    {order.payment_method ? PAYMENT_LABELS[order.payment_method] : "—"}
+                    {dateFormatter.format(
+                      new Date(order.paid_at ?? order.cancelled_at ?? order.created_at),
+                    )}{" "}
+                    · {order.payment_method ? PAYMENT_LABELS[order.payment_method] : "—"}
+                    {order.status !== "PAID" &&
+                      ` · ${ORDER_STATUS_LABELS[order.status] ?? order.status}`}
                   </small>
                 </div>
                 <strong>{eur(order.total_amount)}</strong>
-              </div>
+              </button>
             ))}
           </div>
         )}
@@ -228,6 +261,22 @@ export default function Bilan() {
           </div>
         )}
       </AsyncSection>
+
+      {receiptOrderId !== null && (
+        <ReceiptDialog
+          orderId={receiptOrderId}
+          canRefund={canRefund}
+          onClose={() => setReceiptOrderId(null)}
+          onRefunded={() => {
+            setReceiptOrderId(null);
+            // A refund changes net revenue, expected cash and the order's
+            // own status — refetch rather than leave three stale figures.
+            statsQuery.refetch();
+            ordersQuery.refetch();
+            movementsQuery.refetch();
+          }}
+        />
+      )}
     </Shell>
   );
 }

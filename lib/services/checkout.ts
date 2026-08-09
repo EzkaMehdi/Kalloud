@@ -204,6 +204,7 @@ export async function performCheckout(
       productId: number;
       quantity: number;
       unitPriceCents: number;
+      taxRatePercent: string;
       notes: string | null;
     }[] = [];
 
@@ -224,6 +225,7 @@ export async function performCheckout(
         productId: item.productId,
         quantity: item.quantity,
         unitPriceCents,
+        taxRatePercent: product.tax_rate_percent,
         notes: item.notes,
       });
     }
@@ -270,8 +272,19 @@ export async function performCheckout(
 
     for (const item of resolvedItems) {
       await client.query(
-        "INSERT INTO order_items (order_id, product_id, quantity, unit_price, notes) VALUES ($1, $2, $3, $4, $5)",
-        [order.id, item.productId, item.quantity, fromCents(item.unitPriceCents), item.notes],
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, tax_rate_percent, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          order.id,
+          item.productId,
+          item.quantity,
+          fromCents(item.unitPriceCents),
+          // ORD-09: snapshotted with the price, so the receipt's per-rate
+          // breakdown states what was charged rather than what today's
+          // catalog would charge.
+          item.taxRatePercent,
+          item.notes,
+        ],
       );
     }
 

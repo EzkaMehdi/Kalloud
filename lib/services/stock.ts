@@ -82,3 +82,52 @@ export async function decrementStockAtomically(
 
   return balances;
 }
+
+/**
+ * ORD-10: puts stock back for a fully refunded sale.
+ *
+ * The mirror of `decrementStockAtomically`, and deliberately not a call to
+ * it with a negative quantity: there is no stock check to make here (adding
+ * units can never take a balance below zero), and the `RETURN` movement type
+ * is constrained to a positive quantity at the database level, so the two
+ * really are different operations rather than one with a sign flipped.
+ *
+ * Products are merged and locked in id order for the same reason every other
+ * multi-product write does it (API-02): a refund and a sale touching the same
+ * two products in opposite order would otherwise be able to deadlock.
+ */
+export async function returnStockAtomically(
+  db: Queryable,
+  locationId: number,
+  items: StockDecrementItem[],
+  movement: Omit<StockMovementContext, "type">,
+): Promise<Map<number, number>> {
+  const balances = new Map<number, number>();
+
+  for (const item of mergeByProduct(items)) {
+    // Locks the row even though nothing can fail on the balance: the
+    // movement and the materialized column must move together, and another
+    // sale holding the same product must wait rather than read a balance
+    // that is about to change (DEC-06's "solde matérialisé + ledger").
+    const product = await lockActiveProductForStockOperation(db, locationId, item.productId);
+    if (!product) {
+      // A product deactivated since the sale. Refusing the whole refund over
+      // it would trap the money, so the stock side is simply skipped — the
+      // ledger stays truthful about what it does record.
+      continue;
+    }
+
+    const { balance } = await recordStockMovement(db, locationId, {
+      productId: item.productId,
+      quantity: item.quantity,
+      type: "RETURN",
+      reason: movement.reason,
+      createdBy: movement.createdBy,
+      referenceType: movement.referenceType,
+      referenceId: movement.referenceId,
+    });
+    balances.set(item.productId, balance);
+  }
+
+  return balances;
+}

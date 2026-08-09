@@ -208,6 +208,57 @@ export async function bumpTicketVersion(
   return row.version;
 }
 
+/**
+ * ORD-06: `OPEN` -> `CANCELLED`, with the motive kept on the row.
+ *
+ * Guarded on `status = 'OPEN'` in the UPDATE itself, not just by a prior
+ * read: that is what makes it impossible to cancel an order that was paid a
+ * moment ago by another device. Nothing is deleted — the ticket stays in
+ * history with its lines, which is what "ticket conservé en historique"
+ * asks for.
+ */
+export async function cancelTicket(
+  db: Queryable,
+  locationId: number,
+  orderId: number,
+  reason: string,
+): Promise<TicketRow> {
+  const { rows } = await db.query<{ id: number }>(
+    `UPDATE orders
+     SET status = 'CANCELLED', cancelled_at = now(), cancellation_reason = $3,
+         version = version + 1
+     WHERE location_id = $1 AND id = $2 AND status = 'OPEN'
+     RETURNING id`,
+    [locationId, orderId, reason],
+  );
+  if (!rows[0]) {
+    throw new NotFoundError("Ticket ouvert introuvable.");
+  }
+  const ticket = await findTicketById(db, locationId, orderId);
+  if (!ticket) throw new NotFoundError("Ticket introuvable.");
+  return ticket;
+}
+
+/**
+ * Open counter tickets — direct sales, which belong to no table and so
+ * cannot be found on the floor plan.
+ *
+ * Without this they would be invisible: opened, abandoned, and impossible
+ * to reach again or cancel. ORD-07's "un seul parcours" means the counter
+ * needs the same "reprendre un ticket" affordance a table already has.
+ */
+export async function listOpenCounterTickets(
+  db: Queryable,
+  locationId: number,
+): Promise<TicketRow[]> {
+  const { rows } = await db.query<TicketRow>(
+    `${TICKET_SELECT} WHERE o.location_id = $1 AND o.status = 'OPEN' AND o.table_id IS NULL
+     ORDER BY o.created_at`,
+    [locationId],
+  );
+  return rows;
+}
+
 /** Recomputes and stores the running total from the ticket's own lines. */
 export async function refreshTicketTotal(
   db: Queryable,

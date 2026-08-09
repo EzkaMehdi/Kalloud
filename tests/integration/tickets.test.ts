@@ -9,12 +9,15 @@ import {
   openBusinessDay,
 } from "../../lib/repositories/business-days";
 import { getCashBalance } from "../../lib/repositories/cash-movements";
+import { listAuditEvents } from "../../lib/audit";
 import { listOrders } from "../../lib/repositories/orders";
 import { createProduct, listProducts, type ProductRow } from "../../lib/repositories/products";
 import { createDiningTable, listDiningTables } from "../../lib/repositories/tables";
 import { performCheckout } from "../../lib/services/checkout";
 import {
+  cancelTicket,
   getTicket,
+  listOpenCounterSales,
   openDirectSaleTicket,
   openOrResumeTableTicket,
   saveTicketItems,
@@ -306,21 +309,27 @@ describe("ORD-05: concurrent edits do not overwrite each other", () => {
 });
 
 describe("ORD-04: paying a ticket charges what the ticket holds", () => {
-  it("uses the persisted lines, not what the caller sends", async () => {
+  it("uses the persisted lines — a checkout cannot carry any of its own", async () => {
     const { ticket } = await openOrResumeTableTicket(context, tableId);
     await saveTicketItems(context, ticket.id, {
       version: ticket.version,
       items: [{ productId: coffee.id, quantity: 4 }],
     });
 
-    const result = await performCheckout(
-      context,
-      // The caller offers a cheaper line list; the ticket is what counts.
-      parseOrThrow(checkoutBodySchema, {
+    // ORD-07 went further than "the ticket wins": a checkout body has no
+    // `items` field at all, so a client cannot even propose a cheaper line
+    // list for the server to ignore. The strict schema refuses it outright.
+    expect(
+      checkoutBodySchema.safeParse({
         orderId: ticket.id,
         items: [{ productId: coffee.id, quantity: 1 }],
         paymentMethod: "CARD",
-      }),
+      }).success,
+    ).toBe(false);
+
+    const result = await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: ticket.id, paymentMethod: "CARD" }),
     );
 
     expect(result.order.total_amount).toBe("10.00");
@@ -468,5 +477,177 @@ describe("ORD-07 groundwork: a direct sale is a ticket too", () => {
     // customers at the counter are two tickets, not a conflict.
     const tables = await listDiningTables(pool, tenant.locationId);
     expect(tables.every((table) => !table.is_occupied)).toBe(true);
+  });
+});
+
+describe("ORD-06: cancelling an open ticket", () => {
+  it("keeps the ticket in history with its motive, and frees the table", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 2 }],
+    });
+
+    const cancelled = await cancelTicket(context, ticket.id, { reason: "Client parti" });
+
+    expect(cancelled.status).toBe("CANCELLED");
+    // "Ticket conservé en historique": nothing is deleted — the one line,
+    // holding its two coffees, is still there.
+    expect(cancelled.items).toHaveLength(1);
+    expect(cancelled.items[0].quantity).toBe(2);
+    expect(cancelled.total_amount).toBe("5.00");
+    const { rows } = await pool.query<{ cancellation_reason: string; cancelled_at: string }>(
+      "SELECT cancellation_reason, cancelled_at FROM orders WHERE id = $1",
+      [ticket.id],
+    );
+    expect(rows[0].cancellation_reason).toBe("Client parti");
+    expect(rows[0].cancelled_at).not.toBeNull();
+
+    // ORD-03 again: the table frees itself, because it is derived.
+    const tables = await listDiningTables(pool, tenant.locationId);
+    expect(tables[0].is_occupied).toBe(false);
+  });
+
+  it("takes nothing from stock — an open ticket never decremented any", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 5 }],
+    });
+
+    await cancelTicket(context, ticket.id, { reason: "Erreur de saisie" });
+
+    const products = await listProducts(pool, tenant.locationId);
+    expect(products.find((row) => row.id === coffee.id)?.stock_quantity).toBe(20);
+  });
+
+  it("writes an audit event naming the actor and the motive", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await cancelTicket(context, ticket.id, { reason: "Table libérée" });
+
+    const events = await listAuditEvents(pool, tenant.locationId);
+    const cancelEvent = events.find((event) => event.action === "order.cancel");
+    expect(cancelEvent).toBeDefined();
+    expect(cancelEvent?.actorUserId).toBe(context.userId);
+    expect(cancelEvent?.after).toMatchObject({ reason: "Table libérée" });
+  });
+
+  it("refuses to cancel a ticket that was already paid", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+    await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: ticket.id, paymentMethod: "CARD" }),
+    );
+
+    // A paid sale is reversed by a refund (ORD-10), never by cancelling it —
+    // that would erase money that actually changed hands.
+    await expect(cancelTicket(context, ticket.id, { reason: "Trop tard" })).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
+
+  it("refuses to cancel the same ticket twice", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await cancelTicket(context, ticket.id, { reason: "Première annulation" });
+    await expect(cancelTicket(context, ticket.id, { reason: "Deuxième" })).rejects.toBeInstanceOf(
+      ConflictError,
+    );
+  });
+
+  it("refuses to cancel another establishment's ticket", async () => {
+    const other = await createTestTenant(pool, "Other Tenant");
+    const otherOwner = await createTestUser(pool, other, "OWNER");
+    await openBusinessDay(pool, other.locationId, "0.00");
+    const foreign = await openDirectSaleTicket({
+      userId: otherOwner.userId,
+      userEmail: otherOwner.email,
+      userName: "Owner Other",
+      organizationId: other.organizationId,
+      locationId: other.locationId,
+      role: "OWNER",
+      sessionId: 3,
+    });
+
+    await expect(cancelTicket(context, foreign.id, { reason: "Tentative" })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it("lets a cancelled ticket appear in history, unlike an open one", async () => {
+    const { ticket } = await openOrResumeTableTicket(context, tableId);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+    expect(await listOrders(pool, tenant.locationId)).toHaveLength(0);
+
+    await cancelTicket(context, ticket.id, { reason: "Annulé" });
+    const history = await listOrders(pool, tenant.locationId);
+    expect(history).toHaveLength(1);
+    expect(history[0].status).toBe("CANCELLED");
+  });
+});
+
+describe("ORD-07: one journey, tables and counter alike", () => {
+  it("lists open counter tickets so an abandoned one stays reachable", async () => {
+    const abandoned = await openDirectSaleTicket(context);
+    await saveTicketItems(context, abandoned.id, {
+      version: abandoned.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+
+    // Before ORD-07 this ticket existed but no screen could reach it: it
+    // belongs to no table, so the floor plan cannot show it.
+    const counter = await listOpenCounterSales(context);
+    expect(counter.map((row) => row.id)).toContain(abandoned.id);
+    expect(counter[0].total_amount).toBe("2.50");
+  });
+
+  it("does not list a table's ticket among the counter ones", async () => {
+    await openOrResumeTableTicket(context, tableId);
+    expect(await listOpenCounterSales(context)).toHaveLength(0);
+  });
+
+  it("drops a counter ticket off the list once it is paid or cancelled", async () => {
+    const paid = await openDirectSaleTicket(context);
+    await saveTicketItems(context, paid.id, {
+      version: paid.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+    const cancelled = await openDirectSaleTicket(context);
+
+    await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: paid.id, paymentMethod: "CASH" }),
+    );
+    await cancelTicket(context, cancelled.id, { reason: "Abandonné" });
+
+    expect(await listOpenCounterSales(context)).toHaveLength(0);
+  });
+
+  it("makes every sale pass through an OPEN state — there is no other way in", async () => {
+    const ticket = await openDirectSaleTicket(context);
+    await saveTicketItems(context, ticket.id, {
+      version: ticket.version,
+      items: [{ productId: coffee.id, quantity: 1 }],
+    });
+    await performCheckout(
+      context,
+      parseOrThrow(checkoutBodySchema, { orderId: ticket.id, paymentMethod: "CASH" }),
+    );
+
+    // The paid order is the very row that was open a moment ago: same id,
+    // same number, one row — not a second order created at payment time.
+    const orders = await listOrders(pool, tenant.locationId);
+    expect(orders).toHaveLength(1);
+    expect(orders[0].id).toBe(ticket.id);
+    expect(orders[0].order_number).toBe(ticket.order_number);
+    // A counter sale is identifiable in history by having no table.
+    expect(orders[0].table_id).toBeNull();
+    expect(orders[0].table_name).toBeNull();
   });
 });

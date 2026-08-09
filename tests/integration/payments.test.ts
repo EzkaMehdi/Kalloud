@@ -245,8 +245,15 @@ describe("SALE-02: backfilling existing orders' inline payment columns", () => {
   });
 
   it("skips a CANCELLED order — it never had a real charge to explain", async () => {
+    // ORD-06 made a motive mandatory on any cancelled order (migration
+    // 0012), so this fixture supplies one — the constraint refuses a
+    // cancellation without it, which is the whole point of "aucune
+    // annulation silencieuse".
     await pool.query(
-      "UPDATE orders SET status = 'CANCELLED', cash_amount = 20.00, paid_at = NULL, cancelled_at = now() WHERE id = $1",
+      `UPDATE orders
+       SET status = 'CANCELLED', cash_amount = 20.00, paid_at = NULL, cancelled_at = now(),
+           cancellation_reason = 'Test fixture'
+       WHERE id = $1`,
       [orderId],
     );
 

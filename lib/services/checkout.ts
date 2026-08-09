@@ -4,7 +4,6 @@ import { ConflictError, NotFoundError, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
 import { extractTaxCents, fromCents, toCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
-import { nextOrderNumber } from "../repositories/orders";
 import { recordCharge } from "../repositories/payments";
 import { lockProductsForSale } from "../repositories/products";
 import { listTicketItems, lockTicket, type TicketItemRow } from "../repositories/tickets";
@@ -182,18 +181,14 @@ export async function performCheckout(
     // database, never from the request. The browser may have been open for
     // an hour, or another device may have added a round since — the ticket
     // row is what the customer is being charged for.
-    const ticket = input.orderId
-      ? await lockOpenTicketForPayment(client, context.locationId, input.orderId)
-      : null;
+    const ticket = await lockOpenTicketForPayment(client, context.locationId, input.orderId);
 
     const mergedItems = mergeItemsByProduct(
-      ticket
-        ? ticket.items.map((item) => ({
-            productId: item.product_id,
-            quantity: item.quantity,
-            notes: item.notes,
-          }))
-        : (input.items ?? []),
+      ticket.items.map((item) => ({
+        productId: item.product_id,
+        quantity: item.quantity,
+        notes: item.notes,
+      })),
     );
     if (mergedItems.length === 0) {
       throw new ValidationError("Ajoutez au moins un article avant d'encaisser.");
@@ -241,63 +236,37 @@ export async function performCheckout(
       throw new ValidationError("Aucune journée de caisse ouverte.");
     }
 
-    // An existing ticket already holds its number and lines; a direct sale
-    // creates both here. Consumed inside this same transaction: if the
-    // checkout later rolls back (e.g. the stock check below throws), the
-    // number is never committed to an order and the counter simply has a
-    // gap, which nextOrderNumber's own doc comment explains is an accepted
-    // trade-off.
-    let order: CheckoutOrderResult;
-    if (ticket) {
-      // OPEN -> PAID. An UPDATE guarded on the status the row was locked
-      // with, rather than a second INSERT: the ticket keeps its identity,
-      // its number and the moment it was opened, so the floor plan frees
-      // the table by the same fact that records the sale (ORD-03).
-      const { rows } = await client.query<CheckoutOrderResult>(
-        `UPDATE orders
-         SET status = 'PAID', payment_method = $3, cash_amount = $4, card_amount = $5,
-             subtotal_amount = $6, tax_amount = $7, total_amount = $8,
-             business_day_id = COALESCE(business_day_id, $9), paid_at = now(), version = version + 1
-         WHERE location_id = $1 AND id = $2 AND status = 'OPEN'
-         RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
-        [
-          context.locationId,
-          ticket.id,
-          input.paymentMethod,
-          fromCents(cashCents),
-          fromCents(cardCents),
-          fromCents(subtotalCents),
-          fromCents(taxCents),
-          fromCents(totalCents),
-          businessDay.id,
-        ],
-      );
-      order = rows[0];
-      // The lines are already there and already priced; rewrite them so the
-      // stored unit prices match what was just charged.
-      await client.query("DELETE FROM order_items WHERE order_id = $1", [order.id]);
-    } else {
-      const orderNumber = await nextOrderNumber(client, context.locationId);
-      const { rows } = await client.query<CheckoutOrderResult>(
-        `INSERT INTO orders (location_id, table_id, business_day_id, order_number, created_by, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, paid_at)
-         VALUES ($1, $2, $3, $4, $5, 'PAID', $6, $7, $8, $9, $10, $11, now())
-         RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
-        [
-          context.locationId,
-          input.tableId,
-          businessDay.id,
-          orderNumber,
-          context.userId,
-          input.paymentMethod,
-          fromCents(cashCents),
-          fromCents(cardCents),
-          fromCents(subtotalCents),
-          fromCents(taxCents),
-          fromCents(totalCents),
-        ],
-      );
-      order = rows[0];
-    }
+    // ORD-07: one path. `OPEN -> PAID` as an UPDATE guarded on the status
+    // the row was locked with, never a second INSERT — the ticket keeps its
+    // identity, its number and the moment it was opened, so the floor plan
+    // frees the table by the same fact that records the sale (ORD-03). The
+    // parallel "create a PAID order outright" branch that direct sales used
+    // is gone: it was the one way an order could exist without ever having
+    // been open, and the conceptual duplicate ORD-07 set out to remove.
+    const {
+      rows: [order],
+    } = await client.query<CheckoutOrderResult>(
+      `UPDATE orders
+       SET status = 'PAID', payment_method = $3, cash_amount = $4, card_amount = $5,
+           subtotal_amount = $6, tax_amount = $7, total_amount = $8,
+           business_day_id = COALESCE(business_day_id, $9), paid_at = now(), version = version + 1
+       WHERE location_id = $1 AND id = $2 AND status = 'OPEN'
+       RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
+      [
+        context.locationId,
+        ticket.id,
+        input.paymentMethod,
+        fromCents(cashCents),
+        fromCents(cardCents),
+        fromCents(subtotalCents),
+        fromCents(taxCents),
+        fromCents(totalCents),
+        businessDay.id,
+      ],
+    );
+    // The lines are already there and already priced; rewrite them so the
+    // stored unit prices match what was just charged.
+    await client.query("DELETE FROM order_items WHERE order_id = $1", [order.id]);
 
     for (const item of resolvedItems) {
       await client.query(

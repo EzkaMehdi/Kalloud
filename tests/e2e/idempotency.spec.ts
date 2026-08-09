@@ -30,6 +30,28 @@ async function loginAsOwner(request: APIRequestContext) {
   expect(response.ok(), "the seeded owner must be able to log in").toBeTruthy();
 }
 
+/**
+ * Opens a counter ticket holding `lines` and returns its id.
+ *
+ * ORD-07 removed the "post a line list and get a paid order" shape these
+ * tests used: a checkout now names the ticket it settles, so each case has
+ * to create one first. That is also what keeps them isolated from each
+ * other — a ticket per test, not a shared basket.
+ */
+async function openTicketWith(
+  request: APIRequestContext,
+  lines: { productId: number; quantity: number }[],
+): Promise<number> {
+  const opened = await request.post("/api/tickets", { data: { tableId: null } });
+  expect(opened.ok(), "opening a counter ticket must succeed").toBeTruthy();
+  const ticket = (await opened.json()).ticket as { id: number; version: number };
+  const saved = await request.put(`/api/tickets/${ticket.id}/items`, {
+    data: { version: ticket.version, items: lines },
+  });
+  expect(saved.ok(), "saving the ticket's lines must succeed").toBeTruthy();
+  return ticket.id;
+}
+
 async function createIsolatedProduct(request: APIRequestContext): Promise<ProductRow> {
   const response = await request.post("/api/products", {
     data: {
@@ -66,13 +88,8 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
     // quantity sold, atomically, so "-1" here can only mean one sale.
     const product = await createIsolatedProduct(request);
     const key = crypto.randomUUID();
-    const body = {
-      tableId: null,
-      items: [{ productId: product.id, quantity: 1 }],
-      paymentMethod: "CARD",
-      cashAmount: "0.00",
-      cardAmount: "10.00",
-    };
+    const orderId = await openTicketWith(request, [{ productId: product.id, quantity: 1 }]);
+    const body = { orderId, paymentMethod: "CARD" };
 
     // Two clicks in flight at once, carrying the same key — the exact
     // scenario DEC-08 describes.
@@ -101,13 +118,8 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
     const sellable = products.find((product) => product.is_active && product.stock_quantity > 2)!;
 
     const key = crypto.randomUUID();
-    const body = {
-      tableId: null,
-      items: [{ productId: sellable.id, quantity: 1 }],
-      paymentMethod: "CARD",
-      cashAmount: "0.00",
-      cardAmount: Number(sellable.price).toFixed(2),
-    };
+    const orderId = await openTicketWith(request, [{ productId: sellable.id, quantity: 1 }]);
+    const body = { orderId, paymentMethod: "CARD" };
 
     const first = await request.post("/api/checkout", {
       headers: { "Idempotency-Key": key },
@@ -131,29 +143,20 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
     const products: ProductRow[] = await (await request.get("/api/products")).json();
     const sellable = products.find((product) => product.is_active && product.stock_quantity > 3)!;
     const key = crypto.randomUUID();
-    const price = Number(sellable.price);
+
+    const firstTicket = await openTicketWith(request, [{ productId: sellable.id, quantity: 1 }]);
+    const secondTicket = await openTicketWith(request, [{ productId: sellable.id, quantity: 2 }]);
 
     const first = await request.post("/api/checkout", {
       headers: { "Idempotency-Key": key },
-      data: {
-        tableId: null,
-        items: [{ productId: sellable.id, quantity: 1 }],
-        paymentMethod: "CARD",
-        cashAmount: "0.00",
-        cardAmount: price.toFixed(2),
-      },
+      data: { orderId: firstTicket, paymentMethod: "CARD" },
     });
     expect(first.status()).toBe(201);
 
+    // Same key, a genuinely different request: another ticket entirely.
     const different = await request.post("/api/checkout", {
       headers: { "Idempotency-Key": key },
-      data: {
-        tableId: null,
-        items: [{ productId: sellable.id, quantity: 2 }],
-        paymentMethod: "CARD",
-        cashAmount: "0.00",
-        cardAmount: (price * 2).toFixed(2),
-      },
+      data: { orderId: secondTicket, paymentMethod: "CARD" },
     });
     expect(different.status()).toBe(409);
     expect((await different.json()).error.code).toBe("CONFLICT");
@@ -177,14 +180,9 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
     // concurrency-safe proof instead of a global one.
     const product = await createIsolatedProduct(request);
 
+    const orderId = await openTicketWith(request, [{ productId: product.id, quantity: 1 }]);
     const response = await request.post("/api/checkout", {
-      data: {
-        tableId: null,
-        items: [{ productId: product.id, quantity: 1 }],
-        paymentMethod: "CARD",
-        cashAmount: "0.00",
-        cardAmount: "10.00",
-      },
+      data: { orderId, paymentMethod: "CARD" },
     });
 
     expect(response.status()).toBe(400);
@@ -200,17 +198,14 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
 
     const response = await request.post("/api/checkout", {
       headers: { "Idempotency-Key": crypto.randomUUID() },
-      data: {
-        tableId: null,
-        items: [{ productId: 1, quantity: 0 }],
-        paymentMethod: "CARD",
-        cardAmount: "5.00",
-      },
+      data: { orderId: 1, paymentMethod: "MIXED" },
     });
 
     expect(response.status()).toBe(400);
     const envelope = await response.json();
     expect(envelope.error.code).toBe("VALIDATION_ERROR");
-    expect(envelope.error.details[0].field).toBe("items[0].quantity");
+    // ORD-07 removed `items` from this body, so the field-level detail is
+    // now demonstrated on the payment split instead.
+    expect(envelope.error.details[0].field).toBe("cashAmount");
   });
 });

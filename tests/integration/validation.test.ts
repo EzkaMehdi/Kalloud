@@ -6,9 +6,15 @@ import { openBusinessDay } from "../../lib/repositories/business-days";
 import { listCashMovements } from "../../lib/repositories/cash-movements";
 import { listOrders } from "../../lib/repositories/orders";
 import { performCheckout } from "../../lib/services/checkout";
+import { saveTicketItems } from "../../lib/services/tickets";
 import { parseOrThrow } from "../../lib/validation/parse";
-import { checkoutBodySchema, createCashMovementSchema } from "../../lib/validation/schemas";
+import {
+  checkoutBodySchema,
+  createCashMovementSchema,
+  saveTicketItemsSchema,
+} from "../../lib/validation/schemas";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
+import { openTicketWith, paymentFor, sell } from "./helpers/sales";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
 
@@ -77,25 +83,27 @@ async function countDatabaseCalls(action: () => Promise<unknown>): Promise<{
 
 describe("API-01: invalid input is rejected before the database is touched", () => {
   const invalidCheckouts: [string, unknown][] = [
-    ["no items", { items: [], paymentMethod: "CARD", cardAmount: 10 }],
-    ["a zero quantity", { items: [{ productId: 1, quantity: 0 }], paymentMethod: "CARD" }],
+    ["a missing ticket", { paymentMethod: "CARD" }],
+    ["a bogus ticket id", { orderId: 0, paymentMethod: "CARD" }],
+    ["an unknown payment method", { orderId: 1, paymentMethod: "CHEQUE" }],
+    ["an amount with three decimals", { orderId: 1, paymentMethod: "CASH", cashAmount: 4.995 }],
+    ["a MIXED payment that is not split", { orderId: 1, paymentMethod: "MIXED" }],
     [
-      "a non-integer product id",
-      { items: [{ productId: 1.5, quantity: 1 }], paymentMethod: "CARD" },
-    ],
-    [
-      "a price with three decimals",
-      { items: [{ productId: 1, quantity: 1 }], paymentMethod: "CASH", cashAmount: 4.995 },
-    ],
-    [
-      "an unknown payment method",
-      { items: [{ productId: 1, quantity: 1 }], paymentMethod: "CHEQUE" },
-    ],
-    [
-      "a MIXED payment that is not split",
-      { items: [{ productId: 1, quantity: 1 }], paymentMethod: "MIXED" },
+      "a line list, which a checkout may no longer carry",
+      {
+        orderId: 1,
+        paymentMethod: "CARD",
+        items: [{ productId: 1, quantity: 1 }],
+      },
     ],
     ["a missing body", null],
+  ];
+
+  const invalidTicketSaves: [string, unknown][] = [
+    ["a missing version", { items: [{ productId: 1, quantity: 1 }] }],
+    ["a zero quantity", { version: 1, items: [{ productId: 1, quantity: 0 }] }],
+    ["a non-integer product id", { version: 1, items: [{ productId: 1.5, quantity: 1 }] }],
+    ["an unknown field", { version: 1, items: [], extra: true }],
   ];
 
   it.each(invalidCheckouts)("rejects a checkout with %s without querying", async (_label, body) => {
@@ -106,6 +114,18 @@ describe("API-01: invalid input is rejected before the database is touched", () 
     expect(error).toBeInstanceOf(ValidationError);
     expect(calls, "an invalid payload must not reach the database at all").toBe(0);
   });
+
+  it.each(invalidTicketSaves)(
+    "rejects a ticket save with %s without querying",
+    async (_label, body) => {
+      const { calls, error } = await countDatabaseCalls(async () =>
+        saveTicketItems(context, 1, parseOrThrow(saveTicketItemsSchema, body)),
+      );
+
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(calls).toBe(0);
+    },
+  );
 
   it("rejects an invalid cash movement without querying", async () => {
     const { calls, error } = await countDatabaseCalls(async () =>
@@ -146,16 +166,9 @@ describe("API-01: invalid input is rejected before the database is touched", () 
       stockQuantity: 10,
     });
 
+    const ticket = await openTicketWith(context, [{ productId: product.id, quantity: 2 }]);
     const { calls, error } = await countDatabaseCalls(async () =>
-      performCheckout(
-        context,
-        parseOrThrow(checkoutBodySchema, {
-          tableId: null,
-          items: [{ productId: product.id, quantity: 2 }],
-          paymentMethod: "CARD",
-          cardAmount: "5.00",
-        }),
-      ),
+      performCheckout(context, paymentFor(ticket.id, { paymentMethod: "CARD" })),
     );
 
     expect(error).toBeNull();
@@ -176,16 +189,8 @@ describe("API-01: invalid input is rejected before the database is touched", () 
       stockQuantity: 10,
     });
 
-    await performCheckout(
-      context,
-      parseOrThrow(checkoutBodySchema, {
-        tableId: null,
-        items: [{ productId: product.id, quantity: 3 }],
-        paymentMethod: "CASH",
-        // DEC-05's worked example: 3 x 3,33 € is 9,99 €, not 10,00 €.
-        cashAmount: "9.99",
-      }),
-    );
+    // DEC-05's worked example: 3 x 3,33 € is 9,99 €, not 10,00 €.
+    await sell(context, [{ productId: product.id, quantity: 3 }], { paymentMethod: "CASH" });
 
     const [order] = await listOrders(pool, tenant.locationId);
     expect(order.cash_amount).toBe("9.99");

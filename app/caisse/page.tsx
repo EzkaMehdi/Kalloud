@@ -38,6 +38,13 @@ export default function Caisse() {
     () => apiFetch<DashboardSummary>("/api/dashboard?period=day"),
     [],
   );
+  // ORD-07: counter tickets belong to no table, so nothing on the floor plan
+  // would surface them. Without this list they would be unreachable the
+  // moment the drawer closes.
+  const counterQuery = useAsyncData(
+    () => apiFetch<{ id: number; order_number: number; total_amount: string }[]>("/api/tickets"),
+    [],
+  );
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [opening, setOpening] = useState(false);
@@ -53,6 +60,7 @@ export default function Caisse() {
 
   function done(total: number, replayed?: boolean) {
     setTicket(null);
+    counterQuery.refetch();
     tablesQuery.refetch();
     revenueQuery.refetch();
     cashQuery.refetch();
@@ -93,6 +101,19 @@ export default function Caisse() {
     await openTicket({ tableId: tableEntry.id }, tableEntry.is_occupied);
   }
 
+  /** ORD-07: reopens an existing counter ticket by id, the same drawer a table gets. */
+  async function resumeTicket(orderId: number) {
+    if (opening) return;
+    setOpening(true);
+    try {
+      setTicket(await apiFetch<Ticket>(`/api/tickets/${orderId}`));
+    } catch (caught) {
+      message(caught instanceof ApiError ? caught.message : "Impossible de reprendre ce ticket.");
+    } finally {
+      setOpening(false);
+    }
+  }
+
   async function openTicket(body: { tableId: number | null }, resuming = false) {
     if (opening) return;
     setOpening(true);
@@ -103,6 +124,7 @@ export default function Caisse() {
       });
       setTicket(opened.ticket);
       tablesQuery.refetch();
+      counterQuery.refetch();
       if (!opened.created || resuming) {
         message(`Ticket #${opened.ticket.order_number} repris`);
       }
@@ -191,6 +213,32 @@ export default function Caisse() {
         </span>
       </button>
 
+      {counterQuery.state.status === "success" && counterQuery.state.data.length > 0 && (
+        <>
+          <div className="section-title">
+            <div>
+              <h2>Ventes directes en cours</h2>
+              <p className="eyebrow">Tickets au comptoir, sans table</p>
+            </div>
+          </div>
+          <div className="tables">
+            {counterQuery.state.data.map((counterTicket) => (
+              <button
+                key={counterTicket.id}
+                disabled={opening}
+                onClick={() => resumeTicket(counterTicket.id)}
+                className="table-card occupied"
+              >
+                <Table2 className="table-icon" size={25} aria-hidden="true" />
+                <span className="pill busy">EN COURS</span>
+                <h3>Ticket #{counterTicket.order_number}</h3>
+                <p>{Number(counterTicket.total_amount).toFixed(2).replace(".", ",")} €</p>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       <div className="section-title">
         <div>
           <h2>Plan de salle</h2>
@@ -246,11 +294,21 @@ export default function Caisse() {
           ticket={ticket}
           onClose={() => {
             setTicket(null);
-            // A ticket left open keeps its table busy — refetch so the floor
-            // plan says so immediately rather than at the next navigation.
+            // A ticket left open keeps its table busy, and a counter one
+            // keeps its running total — refetch both so the screen says so
+            // immediately rather than at the next navigation. Missing the
+            // counter list here showed an abandoned ticket at 0,00 € even
+            // after lines had been added to it.
             tablesQuery.refetch();
+            counterQuery.refetch();
           }}
           onComplete={done}
+          onCancelled={() => {
+            setTicket(null);
+            tablesQuery.refetch();
+            counterQuery.refetch();
+            message("Ticket annulé : rien n'a été encaissé");
+          }}
         />
       )}
       {movementOpen && (

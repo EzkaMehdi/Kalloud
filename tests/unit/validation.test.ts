@@ -17,10 +17,12 @@ import {
   stockQuantitySchema,
 } from "../../lib/validation/primitives";
 import {
+  cancelTicketSchema,
   checkoutBodySchema,
   createCashMovementSchema,
   createProductSchema,
   dashboardQuerySchema,
+  saveTicketItemsSchema,
   updateDiningTableSchema,
   updateProductSchema,
 } from "../../lib/validation/schemas";
@@ -163,12 +165,15 @@ describe("API-01: text, rates, enums and ranges", () => {
 });
 
 describe("API-01: checkout payload invariants (DEC-05)", () => {
-  const base = { items: [{ productId: 1, quantity: 2 }] };
+  // ORD-07: a checkout settles a ticket. The body names it and describes how
+  // it was paid — the lines live in the database, so `items` and `tableId`
+  // are gone from this schema entirely.
+  const base = { orderId: 7 };
 
   it("accepts each payment method with a coherent split and returns cents", () => {
     expect(
       checkoutBodySchema.parse({ ...base, paymentMethod: "CASH", cashAmount: 20 }),
-    ).toMatchObject({ cashAmountCents: 2000, cardAmountCents: 0 });
+    ).toMatchObject({ orderId: 7, cashAmountCents: 2000, cardAmountCents: 0 });
     expect(
       checkoutBodySchema.parse({ ...base, paymentMethod: "CARD", cardAmount: "20.00" }),
     ).toMatchObject({ cashAmountCents: 0, cardAmountCents: 2000 });
@@ -216,29 +221,24 @@ describe("API-01: checkout payload invariants (DEC-05)", () => {
     ).toBe(false);
   });
 
-  it("requires at least one line and rejects malformed lines", () => {
-    expect(accepts(checkoutBodySchema, { items: [], paymentMethod: "CARD" })).toBe(false);
-    expect(
-      accepts(checkoutBodySchema, {
-        items: [{ productId: 0, quantity: 1 }],
-        paymentMethod: "CARD",
-      }),
-    ).toBe(false);
-    expect(
-      accepts(checkoutBodySchema, {
-        items: [{ productId: 1, quantity: 0 }],
-        paymentMethod: "CARD",
-      }),
-    ).toBe(false);
+  it("requires a ticket, and refuses a bogus one", () => {
+    expect(accepts(checkoutBodySchema, { paymentMethod: "CARD", cardAmount: 5 })).toBe(false);
+    expect(accepts(checkoutBodySchema, { orderId: 0, paymentMethod: "CARD" })).toBe(false);
+    expect(accepts(checkoutBodySchema, { orderId: -3, paymentMethod: "CARD" })).toBe(false);
   });
 
-  it("accepts a direct sale (no table) but not a bogus table id", () => {
+  it("refuses a line list — a checkout may no longer carry its own items", () => {
+    // ORD-07: the only source of a sale's contents is the ticket it
+    // settles. Accepting `items` here, even to ignore them, would leave the
+    // impression a client can influence what it is charged for.
     expect(
-      accepts(checkoutBodySchema, { ...base, tableId: null, paymentMethod: "CARD", cardAmount: 5 }),
-    ).toBe(true);
-    expect(
-      accepts(checkoutBodySchema, { ...base, tableId: -3, paymentMethod: "CARD", cardAmount: 5 }),
+      accepts(checkoutBodySchema, {
+        ...base,
+        paymentMethod: "CARD",
+        items: [{ productId: 1, quantity: 1 }],
+      }),
     ).toBe(false);
+    expect(accepts(checkoutBodySchema, { ...base, paymentMethod: "CARD", tableId: 2 })).toBe(false);
   });
 
   it("rejects an unrecognised key instead of ignoring it", () => {
@@ -246,6 +246,40 @@ describe("API-01: checkout payload invariants (DEC-05)", () => {
     expect(accepts(checkoutBodySchema, { ...base, paymentMethod: "CARD", cardAmout: 20 })).toBe(
       false,
     );
+  });
+});
+
+describe("API-01/ORD-05: ticket line invariants", () => {
+  it("requires the version the caller read", () => {
+    expect(accepts(saveTicketItemsSchema, { items: [] })).toBe(false);
+    expect(accepts(saveTicketItemsSchema, { version: 0, items: [] })).toBe(false);
+    expect(saveTicketItemsSchema.parse({ version: 3, items: [] })).toEqual({
+      version: 3,
+      items: [],
+    });
+  });
+
+  it("accepts an empty ticket — emptying one is a real action", () => {
+    expect(accepts(saveTicketItemsSchema, { version: 1, items: [] })).toBe(true);
+  });
+
+  it("rejects malformed lines", () => {
+    expect(
+      accepts(saveTicketItemsSchema, { version: 1, items: [{ productId: 0, quantity: 1 }] }),
+    ).toBe(false);
+    expect(
+      accepts(saveTicketItemsSchema, { version: 1, items: [{ productId: 1, quantity: 0 }] }),
+    ).toBe(false);
+  });
+});
+
+describe("API-01/ORD-06: cancelling a ticket needs a motive", () => {
+  it("refuses a cancellation with no reason, or a blank one", () => {
+    expect(accepts(cancelTicketSchema, {})).toBe(false);
+    expect(accepts(cancelTicketSchema, { reason: "   " })).toBe(false);
+    expect(cancelTicketSchema.parse({ reason: "  Client parti  " })).toEqual({
+      reason: "Client parti",
+    });
   });
 });
 
@@ -296,9 +330,9 @@ describe("API-01: failures arrive as the application's own error contract", () =
 
   it("carries the offending field path so a form can highlight the input", () => {
     try {
-      parseOrThrow(checkoutBodySchema, {
+      parseOrThrow(saveTicketItemsSchema, {
+        version: 1,
         items: [{ productId: 1, quantity: 0 }],
-        paymentMethod: "CARD",
       });
       expect.unreachable("expected a ValidationError");
     } catch (error) {

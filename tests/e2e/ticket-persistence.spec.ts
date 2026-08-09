@@ -141,3 +141,69 @@ test.describe("ORD-04: a ticket outlives the browser", () => {
     }
   });
 });
+
+test.describe("ORD-06/ORD-07: cancelling and the counter", () => {
+  test("cancelling a ticket needs a motive, frees the table, and charges nothing", async ({
+    page,
+  }) => {
+    await loginAsOwner(page);
+    const productName = await createProduct(page, "6.00");
+    const tableName = await openOwnTable(page);
+
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: new RegExp(escapeRegExp(productName)) }).click();
+    await expect(dialog.locator(".ticket-line")).toContainText(productName);
+
+    await dialog.getByRole("button", { name: /annuler le ticket/i }).click();
+    // "Aucune annulation silencieuse": confirming with no motive is refused
+    // inline, before any request goes out.
+    await dialog.getByRole("button", { name: /confirmer l'annulation/i }).click();
+    await expect(dialog.getByRole("alert")).toContainText(/motif/i);
+
+    await dialog.getByLabel(/motif de l'annulation/i).fill("Client parti");
+    await dialog.getByRole("button", { name: /confirmer l'annulation/i }).click();
+    await expect(dialog).toBeHidden();
+
+    // The table frees itself, and nothing was taken.
+    const tableCard = page.getByRole("button", { name: new RegExp(escapeRegExp(tableName)) });
+    await expect(tableCard).toContainText("LIBRE");
+    await expect(page.getByRole("status")).toContainText(/annulé/i);
+  });
+
+  test("an abandoned counter sale stays reachable instead of vanishing", async ({ page }) => {
+    await loginAsOwner(page);
+    const productName = await createProduct(page, "7.00");
+
+    await page.getByRole("button", { name: /vente directe/i }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+
+    // This spec runs alongside others that also open counter tickets, so the
+    // list below is shared. Reading this ticket's own number is what makes
+    // the assertions target it rather than whichever card happens to be
+    // first — the same isolation reasoning openOwnTable applies to tables.
+    const eyebrow = await dialog.locator(".modal-eyebrow, .eyebrow").first().innerText();
+    const ticketNumber = eyebrow.match(/#(\d+)/)?.[1];
+    expect(ticketNumber, "the drawer must show the ticket's number").toBeTruthy();
+
+    await dialog.getByRole("button", { name: new RegExp(escapeRegExp(productName)) }).click();
+    await expect(dialog.locator(".ticket-total")).toContainText("7.00 €");
+
+    // Close without paying. Before ORD-07 this ticket existed in the
+    // database with no screen able to reach it ever again.
+    await dialog.getByRole("button", { name: /fermer/i }).click();
+    await expect(dialog).toBeHidden();
+
+    await expect(page.getByRole("heading", { name: /ventes directes en cours/i })).toBeVisible();
+    const card = page.locator(".table-card", { hasText: `Ticket #${ticketNumber}` });
+    await expect(card).toContainText("7,00 €");
+
+    // Reopening it shows the same lines, and it can be settled or cancelled
+    // like any table's ticket — one journey, which is ORD-07's whole point.
+    await card.click();
+    const resumed = page.getByRole("dialog");
+    await expect(resumed.locator(".ticket-line")).toContainText(productName);
+    await expect(resumed.getByRole("button", { name: /encaisser/i })).toBeVisible();
+    await expect(resumed.getByRole("button", { name: /annuler le ticket/i })).toBeVisible();
+  });
+});

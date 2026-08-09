@@ -76,6 +76,7 @@ export function OrderDrawer({
   ticket: initialTicket,
   onClose,
   onComplete,
+  onCancelled,
 }: {
   /**
    * ORD-04: the drawer is opened *on* a ticket that already exists
@@ -92,6 +93,8 @@ export function OrderDrawer({
    * confirmation for what was actually a recovered retry.
    */
   onComplete: (total: number, replayed?: boolean) => void;
+  /** ORD-06: the ticket was cancelled — the table is free and nothing was charged. */
+  onCancelled: () => void;
 }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [ticket, setTicket] = useState<Ticket>(initialTicket);
@@ -133,6 +136,9 @@ export function OrderDrawer({
    * as the same sale (DEC-08).
    */
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  /** ORD-06: the cancellation form, opened only on explicit intent. */
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
 
   // SALE-01/SALE-04: the same scoped, real catalog the stock screen reads —
   // no separate constant that could drift from it (P0-03: the old local
@@ -261,6 +267,31 @@ export function OrderDrawer({
             : [],
       ),
     );
+  }
+
+  /**
+   * ORD-06: a two-step cancellation — reveal the form, then confirm with a
+   * motive. Not a `confirm()`: the motive is required, it is what the audit
+   * log and the order row will carry, and a native dialog cannot collect it.
+   */
+  async function confirmCancel() {
+    if (!cancelReason.trim()) {
+      setError("Indiquez le motif de l'annulation.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await apiFetch(`/api/tickets/${ticket.id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason: cancelReason.trim() }),
+      });
+      onCancelled();
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Impossible d'annuler le ticket.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function checkout() {
@@ -482,6 +513,32 @@ export function OrderDrawer({
         >
           {syncing ? "Rechargement…" : "Recharger le ticket"}
         </button>
+      ) : cancelling ? (
+        <div className="cancel-ticket">
+          <TextField
+            label="Motif de l'annulation"
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.target.value)}
+            placeholder="Ex. Client parti sans commander"
+            autoFocus
+            required
+          />
+          <div className="cancel-actions">
+            <button
+              onClick={() => {
+                setCancelling(false);
+                setCancelReason("");
+                setError("");
+              }}
+              disabled={saving}
+            >
+              Revenir au ticket
+            </button>
+            <button onClick={confirmCancel} disabled={saving} className="danger-button">
+              {saving ? "Annulation…" : "Confirmer l'annulation"}
+            </button>
+          </div>
+        </div>
       ) : (
         <button
           disabled={ticket.items.length === 0 || saving || syncing}
@@ -498,6 +555,19 @@ export function OrderDrawer({
             : uncertain
               ? `Vérifier le paiement · ${total.toFixed(2)} €`
               : `Encaisser · ${total.toFixed(2)} €`}
+        </button>
+      )}
+      {!conflict && !cancelling && (
+        // ORD-06: always available, including on an empty ticket — an
+        // abandoned counter sale with no lines still needs a way to be
+        // closed, or it stays open forever with no screen showing it.
+        <button
+          onClick={() => setCancelling(true)}
+          disabled={saving || syncing}
+          className="link-button"
+          style={{ width: "100%", marginTop: 8 }}
+        >
+          Annuler le ticket
         </button>
       )}
     </Dialog>

@@ -8,10 +8,8 @@ import {
 import { getCashBalance } from "../../lib/repositories/cash-movements";
 import { listOrders, nextOrderNumber } from "../../lib/repositories/orders";
 import { createProduct } from "../../lib/repositories/products";
-import { performCheckout } from "../../lib/services/checkout";
-import { parseOrThrow } from "../../lib/validation/parse";
-import { checkoutBodySchema } from "../../lib/validation/schemas";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
+import { sell } from "./helpers/sales";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
 
@@ -43,16 +41,14 @@ beforeEach(async () => {
   };
 });
 
-async function checkout(productId: number, quantity: number, cashAmount: string) {
-  return performCheckout(
-    context,
-    parseOrThrow(checkoutBodySchema, {
-      tableId: null,
-      items: [{ productId, quantity }],
-      paymentMethod: "CASH",
-      cashAmount,
-    }),
-  );
+/**
+ * A completed cash sale. ORD-07 made every sale settle a ticket, so this
+ * opens one first; `cashAmount` is no longer sent at all, since SALE-03
+ * derives a CASH sale's amount from the server-computed total and ignores
+ * whatever a client would have proposed.
+ */
+async function checkout(productId: number, quantity: number) {
+  return sell(context, [{ productId, quantity }], { paymentMethod: "CASH" });
 }
 
 describe("ORD-01: canonical order lifecycle", () => {
@@ -65,7 +61,7 @@ describe("ORD-01: canonical order lifecycle", () => {
       stockQuantity: 10,
     });
 
-    await checkout(product.id, 1, "15.00");
+    await checkout(product.id, 1);
 
     const [order] = await listOrders(pool, tenant.locationId);
     expect(order.status).toBe("PAID");
@@ -93,9 +89,9 @@ describe("ORD-01: canonical order lifecycle", () => {
       stockQuantity: 10,
     });
 
-    await checkout(product.id, 1, "4.00");
-    await checkout(product.id, 1, "4.00");
-    await checkout(product.id, 1, "4.00");
+    await checkout(product.id, 1);
+    await checkout(product.id, 1);
+    await checkout(product.id, 1);
 
     const orders = await listOrders(pool, tenant.locationId);
     const numbers = orders.map((order) => order.order_number).sort((a, b) => a - b);
@@ -132,8 +128,8 @@ describe("ORD-01: canonical order lifecycle", () => {
     // order_number_counters upsert itself as what prevents the collision,
     // per its doc comment in lib/repositories/orders.ts.
     const [resultA, resultB] = await Promise.all([
-      checkout(productA.id, 1, "5.00"),
-      checkout(productB.id, 1, "7.00"),
+      checkout(productA.id, 1),
+      checkout(productB.id, 1),
     ]);
 
     expect(resultA.order.order_number).not.toBe(resultB.order.order_number);
@@ -184,7 +180,7 @@ describe("ORD-01: canonical order lifecycle", () => {
       stockQuantity: 10,
     });
 
-    await checkout(product.id, 2, "5.00");
+    await checkout(product.id, 2);
 
     const summary = await getBusinessDaySummary(pool, tenant.locationId, businessDay.id);
     expect(summary.revenue).toBe("5.00");

@@ -25,7 +25,11 @@ import { createCashMovement, listCashMovements } from "../../lib/repositories/ca
 import { getLocationSettings, listTaxClasses } from "../../lib/repositories/settings";
 import { listOrders } from "../../lib/repositories/orders";
 import { performCheckout } from "../../lib/services/checkout";
-import { openOrResumeTableTicket } from "../../lib/services/tickets";
+import {
+  openDirectSaleTicket,
+  openOrResumeTableTicket,
+  saveTicketItems,
+} from "../../lib/services/tickets";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
@@ -275,32 +279,50 @@ describe("SEC-08: audit log isolation", () => {
 });
 
 describe("SEC-08: checkout cannot reach across tenants", () => {
-  it("rejects a checkout that references another tenant's product and leaves both tenants' stock untouched", async () => {
-    await openBusinessDay(pool, tenantA.locationId, "100.00");
+  it("refuses to pay another tenant's ticket as if it did not exist", async () => {
+    // ORD-07 made every sale name the ticket it settles, so this — not a
+    // product id in a request body — is now the way a checkout could reach
+    // across establishments.
+    await openBusinessDay(pool, tenantB.locationId, "100.00");
     const productB = await createProduct(pool, tenantB.locationId, {
       categoryId: null,
       name: "Tenant B Product",
       price: "10.00",
       stockQuantity: 5,
     });
+    const ownerB = await createTestUser(pool, tenantB, "OWNER");
+    const contextB: RequestContext = {
+      userId: ownerB.userId,
+      userEmail: ownerB.email,
+      userName: "Owner B",
+      organizationId: tenantB.organizationId,
+      locationId: tenantB.locationId,
+      role: "OWNER",
+      sessionId: 2,
+    };
+    const ticketB = await openDirectSaleTicket(contextB);
+    await saveTicketItems(contextB, ticketB.id, {
+      version: ticketB.version,
+      items: [{ productId: productB.id, quantity: 1 }],
+    });
 
     await expect(
       performCheckout(contextA, {
-        tableId: null,
-        items: [{ productId: productB.id, quantity: 1 }],
+        orderId: ticketB.id,
         paymentMethod: "CARD",
         cashAmountCents: 0,
         cardAmountCents: 1000,
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
 
+    // B's ticket is untouched: still open, still unsold.
     const productsB = await listProducts(pool, tenantB.locationId);
     expect(productsB.find((p) => p.id === productB.id)?.stock_quantity).toBe(5);
-    const ordersA = await listOrders(pool, tenantA.locationId);
-    expect(ordersA).toHaveLength(0);
+    expect(await listOrders(pool, tenantA.locationId)).toHaveLength(0);
+    expect(await listOrders(pool, tenantB.locationId)).toHaveLength(0);
   });
 
-  it("still lets tenant A check out its own product normally (isolation is not over-blocking)", async () => {
+  it("still lets tenant A sell its own product normally (isolation is not over-blocking)", async () => {
     await openBusinessDay(pool, tenantA.locationId, "100.00");
     const productA = await createProduct(pool, tenantA.locationId, {
       categoryId: null,
@@ -309,9 +331,13 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
       stockQuantity: 5,
     });
 
-    const result = await performCheckout(contextA, {
-      tableId: null,
+    const ticket = await openDirectSaleTicket(contextA);
+    await saveTicketItems(contextA, ticket.id, {
+      version: ticket.version,
       items: [{ productId: productA.id, quantity: 2 }],
+    });
+    const result = await performCheckout(contextA, {
+      orderId: ticket.id,
       paymentMethod: "CARD",
       cashAmountCents: 0,
       cardAmountCents: 2000,
@@ -322,26 +348,12 @@ describe("SEC-08: checkout cannot reach across tenants", () => {
     expect(productsA.find((p) => p.id === productA.id)?.stock_quantity).toBe(3);
   });
 
-  it("rejects checkout when no business day is open, independent of the other tenant's state", async () => {
-    // Tenant B has an open day, tenant A does not - a bug that resolved
-    // "the" active business day globally instead of scoping it would let
-    // this succeed against tenant B's day.
+  it("refuses to open a ticket on another tenant's business day", async () => {
+    // Tenant B has an open day, tenant A does not — a bug resolving "the"
+    // active business day globally instead of per establishment would let
+    // tenant A start selling on B's service.
     await openBusinessDay(pool, tenantB.locationId, "100.00");
-    const productA = await createProduct(pool, tenantA.locationId, {
-      categoryId: null,
-      name: "Tenant A Product",
-      price: "10.00",
-      stockQuantity: 5,
-    });
 
-    await expect(
-      performCheckout(contextA, {
-        tableId: null,
-        items: [{ productId: productA.id, quantity: 1 }],
-        paymentMethod: "CARD",
-        cashAmountCents: 0,
-        cardAmountCents: 1000,
-      }),
-    ).rejects.toBeInstanceOf(ValidationError);
+    await expect(openDirectSaleTicket(contextA)).rejects.toBeInstanceOf(ValidationError);
   });
 });

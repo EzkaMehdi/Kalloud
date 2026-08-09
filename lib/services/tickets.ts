@@ -8,8 +8,10 @@ import { lockProductsForSale } from "../repositories/products";
 import { findDiningTable } from "../repositories/tables";
 import {
   bumpTicketVersion,
+  cancelTicket as cancelTicketRow,
   createOpenTicket,
   findOpenTicketForTable,
+  listOpenCounterTickets,
   loadTicket,
   lockTicket,
   refreshTicketTotal,
@@ -17,7 +19,7 @@ import {
   type Ticket,
 } from "../repositories/tickets";
 import type { RequestContext } from "../context";
-import type { SaveTicketItemsBody } from "../validation/schemas";
+import type { CancelTicketBody, SaveTicketItemsBody } from "../validation/schemas";
 
 /**
  * ORD-02/ORD-04/ORD-05: the open ticket's lifecycle up to (but not
@@ -206,6 +208,57 @@ export async function saveTicketItems(
     const ticket = await loadTicket(client, context.locationId, orderId);
     return ticket!;
   });
+}
+
+/**
+ * ORD-06: cancels an open ticket, with a motive that is recorded, audited,
+ * and impossible to omit.
+ *
+ * No stock is returned and no payment is reversed, because neither ever
+ * happened: an open ticket has taken nothing from the customer and nothing
+ * from the shelf — SALE-03 decrements stock at payment. Cancelling one is
+ * therefore a lifecycle transition, not a financial reversal; that is
+ * ORD-10's job, on a `PAID` order.
+ */
+export async function cancelTicket(
+  context: RequestContext,
+  orderId: number,
+  input: CancelTicketBody,
+): Promise<Ticket> {
+  return withTransaction(async (client) => {
+    const locked = await lockTicket(client, context.locationId, orderId);
+    if (!locked) {
+      throw new NotFoundError("Ticket introuvable.");
+    }
+    if (locked.status !== "OPEN") {
+      throw new ConflictError(
+        locked.status === "PAID"
+          ? "Ce ticket a déjà été encaissé : une vente payée s'annule par un remboursement."
+          : "Ce ticket est déjà annulé.",
+      );
+    }
+
+    const before = await loadTicket(client, context.locationId, orderId);
+    await cancelTicketRow(client, context.locationId, orderId, input.reason);
+
+    await recordAuditEvent(client, {
+      locationId: context.locationId,
+      actorUserId: context.userId,
+      action: "order.cancel",
+      targetType: "order",
+      targetId: orderId,
+      before: { status: "OPEN", total: before?.total_amount, itemCount: before?.items.length },
+      after: { status: "CANCELLED", reason: input.reason },
+    });
+
+    const ticket = await loadTicket(client, context.locationId, orderId);
+    return ticket!;
+  });
+}
+
+/** ORD-07: the counter's open tickets, which no floor-plan card can surface. */
+export async function listOpenCounterSales(context: RequestContext) {
+  return withTransaction((client) => listOpenCounterTickets(client, context.locationId));
 }
 
 interface MergedTicketItem {

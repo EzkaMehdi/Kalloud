@@ -2,9 +2,27 @@ import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { apiRoute, jsonOk } from "@/lib/http";
-import { openDirectSaleTicket, openOrResumeTableTicket } from "@/lib/services/tickets";
+import {
+  listOpenCounterSales,
+  openDirectSaleTicket,
+  openOrResumeTableTicket,
+} from "@/lib/services/tickets";
 import { parseJsonBody } from "@/lib/validation/parse";
 import { openTicketSchema } from "@/lib/validation/schemas";
+
+/**
+ * ORD-07: the counter's open tickets.
+ *
+ * A table's ticket is reachable from its card on the floor plan; a direct
+ * sale belongs to no table and would otherwise be unreachable the moment the
+ * drawer closes — opened, abandoned, and impossible to resume or cancel.
+ * "Un seul parcours" means the counter gets the same "reprendre un ticket"
+ * affordance a table already has.
+ */
+export const GET = apiRoute(async () => {
+  const context = await requireRequestContext();
+  return jsonOk(await listOpenCounterSales(context));
+});
 
 /**
  * ORD-02/ORD-04: opens a table's ticket, or resumes the one already on it.

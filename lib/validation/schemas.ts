@@ -75,19 +75,19 @@ export const checkoutItemSchema = z.strictObject({
  */
 export const checkoutBodySchema = z
   .strictObject({
-    tableId: idSchema.nullish(),
     /**
-     * ORD-04/ORD-05: pay a ticket that already exists. When present, the
-     * sale's contents come from that ticket's persisted lines and `items`
-     * is not read at all — the ticket in the database is the truth, not
-     * whatever the browser still had in memory. Without it, this is a
-     * direct sale and `items` describes it (ORD-07 folds the two together).
+     * ORD-07: every sale names the ticket it settles. There is no second way
+     * in any more — a counter sale opens a ticket exactly like a table does,
+     * so "vente directe" is a ticket without a table rather than a parallel
+     * journey with its own rules. That removes the conceptual duplicate the
+     * task names, and with it the only path by which an order could reach
+     * `PAID` without ever having been `OPEN`.
+     *
+     * The sale's contents always come from that ticket's persisted lines:
+     * the database is the truth, not whatever the browser still had in
+     * memory.
      */
-    orderId: idSchema.optional(),
-    items: z
-      .array(checkoutItemSchema, { error: "Ajoutez au moins un article." })
-      .max(200, { error: "Une commande ne peut pas dépasser 200 lignes." })
-      .optional(),
+    orderId: idSchema,
     paymentMethod: paymentMethodSchema,
     cashAmount: moneyAmountSchema.optional(),
     cardAmount: moneyAmountSchema.optional(),
@@ -95,14 +95,6 @@ export const checkoutBodySchema = z
   .superRefine((body, ctx) => {
     const cash = body.cashAmount ?? 0;
     const card = body.cardAmount ?? 0;
-
-    if (body.orderId === undefined && (body.items === undefined || body.items.length === 0)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["items"],
-        message: "Ajoutez au moins un article.",
-      });
-    }
 
     if (body.paymentMethod === "CASH" && card !== 0) {
       ctx.addIssue({
@@ -222,6 +214,17 @@ export const saveTicketItemsSchema = z.strictObject({
     .max(200, { error: "Un ticket ne peut pas dépasser 200 lignes." }),
 });
 export type SaveTicketItemsBody = z.infer<typeof saveTicketItemsSchema>;
+
+/**
+ * ORD-06: a motive is required, not optional. "Aucune annulation
+ * silencieuse" is the acceptance criterion, and an optional field defaulting
+ * to empty would be exactly that with extra steps — the database refuses one
+ * too (migration 0012).
+ */
+export const cancelTicketSchema = z.strictObject({
+  reason: shortTextSchema(255, "Le motif d'annulation"),
+});
+export type CancelTicketBody = z.infer<typeof cancelTicketSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Cash                                                                       */

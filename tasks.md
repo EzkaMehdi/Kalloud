@@ -604,17 +604,19 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Acceptation : deux appareils ne s’écrasent pas silencieusement ; l’utilisateur peut recharger l’état courant.
   - Mise en œuvre : `PUT /api/tickets/:id/items` avec verrou optimiste (`orders.version`). Une version périmée renvoie 409 et le tiroir propose « Recharger le ticket » au lieu de laisser renvoyer une liste obsolète. Le conflit réel entre deux navigateurs est testé en E2E.
 
-- [ ] **`ORD-06` — Annuler un ticket ouvert**
+- [x] **`ORD-06` — Annuler un ticket ouvert**
   - Priorité : `P0`
   - Dépend de : `ORD-02`, `ORD-03`, `ORD-04`, `SEC-09`
   - Livrable : confirmation, motif, audit et libération de table.
   - Acceptation : aucune annulation silencieuse ; ticket conservé en historique.
+  - Mise en œuvre : `POST /api/tickets/:id/cancel`, permission `orders:cancel_open`. Le motif est exigé à trois niveaux — schéma, contrainte base (migration 0012) et journal d'audit. Rien n'est supprimé : le ticket garde ses lignes et apparaît en historique avec le statut `CANCELLED`. Aucun stock n'est rendu, un ticket ouvert n'en ayant jamais pris.
 
-- [ ] **`ORD-07` — Unifier la vente directe**
+- [x] **`ORD-07` — Unifier la vente directe**
   - Priorité : `P0`
   - Dépend de : `DEC-03`, `ORD-02`, `ORD-04`
   - Livrable : un seul parcours « Vente directe » ou « Comptoir ».
   - Acceptation : aucun doublon conceptuel et historique clairement identifiable.
+  - Mise en œuvre : le corps d'un encaissement ne porte plus que `orderId`. La branche « créer une commande payée directement » est supprimée : c'était le seul moyen qu'une commande atteigne `PAID` sans avoir été `OPEN`. Une vente au comptoir est un ticket sans table, identifiable comme telle en historique, et `GET /api/tickets` la rend joignable — sans quoi elle devenait invisible dès la fermeture du tiroir.
 
 - [ ] **`ORD-08` — Ajouter auteur et notes**
   - Priorité : `P1`

@@ -8,9 +8,8 @@ import { createProduct } from "../../lib/repositories/products";
 import { getStockBalanceFromLedger } from "../../lib/repositories/stock-movements";
 import { performCheckout } from "../../lib/services/checkout";
 import { createProductWithInitialStock } from "../../lib/services/products";
-import { parseOrThrow } from "../../lib/validation/parse";
-import { checkoutBodySchema } from "../../lib/validation/schemas";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
+import { openTicketWith, paymentFor } from "./helpers/sales";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
 
@@ -42,13 +41,23 @@ beforeEach(async () => {
   await openBusinessDay(pool, tenant.locationId, "0.00");
 });
 
-function checkoutBody(input: {
+/**
+ * Opens a ticket holding `items` and returns the payload that settles it.
+ *
+ * ORD-07 folded the direct-sale path into the ticket one, so a checkout body
+ * no longer carries lines at all — it names the ticket. The call sites below
+ * are unchanged in intent; they just have to create the ticket first, which
+ * is what makes this async.
+ */
+async function checkoutBody(input: {
   items: { productId: number; quantity: number }[];
   paymentMethod: "CASH" | "CARD" | "MIXED";
   cashAmount?: string;
   cardAmount?: string;
 }) {
-  return parseOrThrow(checkoutBodySchema, { tableId: null, ...input });
+  const { items, ...payment } = input;
+  const ticket = await openTicketWith(context, items);
+  return paymentFor(ticket.id, payment);
 }
 
 describe("SALE-03: server-computed tax (DEC-05)", () => {
@@ -62,7 +71,7 @@ describe("SALE-03: server-computed tax (DEC-05)", () => {
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 1 }],
         paymentMethod: "CASH",
       }),
@@ -86,7 +95,7 @@ describe("SALE-03: server-computed tax (DEC-05)", () => {
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 3 }],
         paymentMethod: "CASH",
       }),
@@ -128,7 +137,7 @@ describe("SALE-03: server-computed tax (DEC-05)", () => {
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [
           { productId: reducedProduct.id, quantity: 1 }, // 20.00 @ 10% -> tax 1.82 (round-half-up)
           { productId: standardProduct.id, quantity: 1 }, // 10.00 @ 20% -> tax 1.67 (round-half-up)
@@ -156,7 +165,7 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 1 }],
         paymentMethod: "CASH",
       }),
@@ -180,7 +189,7 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 1 }],
         paymentMethod: "CARD",
       }),
@@ -207,7 +216,7 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
     // effect at all — the total is what decides the charge, always.
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 1 }],
         paymentMethod: "CASH",
       }),
@@ -227,7 +236,7 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 1 }],
         paymentMethod: "MIXED",
         cashAmount: "12.00",
@@ -255,7 +264,7 @@ describe("SALE-03: cash + card = total, computed server-side (P0-02 regression)"
     await expect(
       performCheckout(
         context,
-        checkoutBody({
+        await checkoutBody({
           items: [{ productId: product.id, quantity: 1 }],
           paymentMethod: "MIXED",
           cashAmount: "12.00",
@@ -286,7 +295,7 @@ describe("SALE-09: MIXED at a non-round, floating-point-prone total (audit gap)"
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 3 }], // total: 9.99
         paymentMethod: "MIXED",
         cashAmount: "4.99",
@@ -310,7 +319,7 @@ describe("SALE-09: MIXED at a non-round, floating-point-prone total (audit gap)"
     await expect(
       performCheckout(
         context,
-        checkoutBody({
+        await checkoutBody({
           items: [{ productId: product.id, quantity: 3 }], // total: 9.99
           paymentMethod: "MIXED",
           cashAmount: "5.00",
@@ -339,7 +348,7 @@ describe("SALE-03: stock movements, not just the materialized column (closing ST
 
     const { order } = await performCheckout(
       context,
-      checkoutBody({
+      await checkoutBody({
         items: [{ productId: product.id, quantity: 3 }],
         paymentMethod: "CASH",
       }),
@@ -379,7 +388,7 @@ describe("SALE-03: stock movements, not just the materialized column (closing ST
     await expect(
       performCheckout(
         context,
-        checkoutBody({
+        await checkoutBody({
           items: [{ productId: product.id, quantity: 5 }],
           paymentMethod: "CASH",
         }),
@@ -413,7 +422,7 @@ describe("SALE-03: stock movements, not just the materialized column (closing ST
     await expect(
       performCheckout(
         context,
-        checkoutBody({
+        await checkoutBody({
           items: [
             { productId: okProduct.id, quantity: 2 },
             { productId: shortProduct.id, quantity: 5 },

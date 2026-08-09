@@ -19,7 +19,12 @@ export interface ReceiptLine {
   product_name: string;
   quantity: number;
   unit_price: string;
+  /** Quantity × unit price, before any discount — the price the customer was quoted. */
   line_total: string;
+  /** ORD-11: this line's share of the order's discount (migration 0014). */
+  line_discount: string;
+  /** What this line actually contributed to the total, and what its tax was extracted from. */
+  line_net: string;
   tax_rate_percent: string | null;
   notes: string | null;
 }
@@ -47,6 +52,8 @@ export interface Receipt {
   subtotal_amount: string | null;
   tax_amount: string | null;
   total_amount: string;
+  /** ORD-11: the discount as applied, or null when there was none. */
+  discount: { type: string; value: string; amount: string; reason: string } | null;
   /**
    * Empty when the order's lines predate ORD-09 and carry no rate: the
    * receipt then shows `tax_amount` alone rather than inventing a
@@ -73,6 +80,10 @@ interface ReceiptOrderRow {
   subtotal_amount: string | null;
   tax_amount: string | null;
   total_amount: string;
+  discount_type: string | null;
+  discount_value: string | null;
+  discount_amount: string | null;
+  discount_reason: string | null;
 }
 
 export async function getReceipt(context: RequestContext, orderId: number): Promise<Receipt> {
@@ -81,7 +92,8 @@ export async function getReceipt(context: RequestContext, orderId: number): Prom
   } = await pool.query<ReceiptOrderRow>(
     `SELECT o.id, o.order_number, o.status, t.name AS table_name, o.created_at, o.paid_at,
             o.refunded_at, o.cancelled_at, u.name AS served_by, o.notes,
-            o.subtotal_amount, o.tax_amount, o.total_amount
+            o.subtotal_amount, o.tax_amount, o.total_amount,
+            o.discount_type, o.discount_value, o.discount_amount, o.discount_reason
      FROM orders o
      LEFT JOIN dining_tables t ON t.id = o.table_id AND t.location_id = o.location_id
      LEFT JOIN users u ON u.id = o.created_by
@@ -95,6 +107,8 @@ export async function getReceipt(context: RequestContext, orderId: number): Prom
   const { rows: lines } = await pool.query<ReceiptLine>(
     `SELECT p.name AS product_name, oi.quantity, oi.unit_price,
             (oi.quantity * oi.unit_price)::DECIMAL(10, 2) AS line_total,
+            oi.discount_amount AS line_discount,
+            (oi.quantity * oi.unit_price - oi.discount_amount)::DECIMAL(10, 2) AS line_net,
             oi.tax_rate_percent, oi.notes
      FROM order_items oi
      JOIN products p ON p.id = oi.product_id
@@ -119,6 +133,15 @@ export async function getReceipt(context: RequestContext, orderId: number): Prom
     subtotal_amount: order.subtotal_amount,
     tax_amount: order.tax_amount,
     total_amount: order.total_amount,
+    discount:
+      order.discount_type && order.discount_value && order.discount_amount && order.discount_reason
+        ? {
+            type: order.discount_type,
+            value: order.discount_value,
+            amount: order.discount_amount,
+            reason: order.discount_reason,
+          }
+        : null,
     tax_bands: buildTaxBands(lines),
     payments,
     net_paid: netPaid(payments),
@@ -142,7 +165,10 @@ function buildTaxBands(lines: ReceiptLine[]): ReceiptTaxBand[] {
   for (const line of lines) {
     if (line.tax_rate_percent === null) continue;
     const rate = Number(line.tax_rate_percent).toFixed(2);
-    byRate.set(rate, (byRate.get(rate) ?? 0) + toCents(line.line_total));
+    // ORD-11: the band is built on what was charged, not on the list
+    // price. DEC-05 applies the discount before tax, so a band that summed
+    // `line_total` would describe amounts nobody paid.
+    byRate.set(rate, (byRate.get(rate) ?? 0) + toCents(line.line_net));
   }
 
   return [...byRate.entries()]

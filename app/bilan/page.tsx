@@ -38,6 +38,15 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   REFUNDED: "Remboursée",
 };
 
+interface OrderHistoryPage {
+  orders: OrderRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+const HISTORY_PAGE_SIZE = 8;
+
 interface CashMovementRow {
   id: number;
   type: "OPENING" | "IN" | "OUT";
@@ -68,6 +77,8 @@ export default function Bilan() {
   const years = useMemo(() => [now.getFullYear(), now.getFullYear() - 1], [now]);
 
   const [receiptOrderId, setReceiptOrderId] = useState<number | null>(null);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyStatus, setHistoryStatus] = useState<"" | "PAID" | "CANCELLED" | "REFUNDED">("");
   const user = useCurrentUser();
   // DEC-07: `orders:refund` is OWNER/MANAGER. A cashier still sees the
   // receipt — they hand it to the customer — but not the refund action.
@@ -83,7 +94,16 @@ export default function Bilan() {
       apiFetch<DashboardStats>(`/api/dashboard?period=${periodKey}&month=${month}&year=${year}`),
     [periodKey, month, year],
   );
-  const ordersQuery = useAsyncData(() => apiFetch<OrderRow[]>("/api/orders"), []);
+  // ORD-12: a real page of history, with its total, replacing the fixed
+  // "fetch 100 and show the first 8" this screen used to do.
+  const ordersQuery = useAsyncData(
+    () =>
+      apiFetch<OrderHistoryPage>(
+        `/api/orders?limit=${HISTORY_PAGE_SIZE}&offset=${historyOffset}` +
+          (historyStatus ? `&status=${historyStatus}` : ""),
+      ),
+    [historyOffset, historyStatus],
+  );
   const movementsQuery = useAsyncData(() => apiFetch<CashMovementRow[]>("/api/cash-movements"), []);
 
   const eur = (value: string | number) => `${Number(value).toFixed(2).replace(".", ",")} €`;
@@ -188,15 +208,40 @@ export default function Bilan() {
           <p className="eyebrow">Dernières ventes de l&apos;établissement</p>
         </div>
       </div>
+      <div className="segmented" role="tablist" aria-label="Filtrer par statut">
+        {(
+          [
+            ["", "Toutes"],
+            ["PAID", "Encaissées"],
+            ["REFUNDED", "Remboursées"],
+            ["CANCELLED", "Annulées"],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={label}
+            role="tab"
+            aria-selected={historyStatus === value}
+            className={historyStatus === value ? "active" : ""}
+            onClick={() => {
+              setHistoryStatus(value);
+              // A filter change makes the current offset meaningless.
+              setHistoryOffset(0);
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <AsyncSection
         state={ordersQuery.state}
         onRetry={ordersQuery.refetch}
-        isEmpty={(data) => data.length === 0}
+        isEmpty={(data) => data.total === 0}
         emptyMessage="Aucune commande encaissée pour le moment."
       >
-        {(orders) => (
+        {(page) => (
           <div className="history-card">
-            {orders.slice(0, 8).map((order) => (
+            {page.orders.map((order) => (
               // ORD-09: the row opens the receipt. A history you cannot open
               // is a list of numbers with nothing behind them.
               <button
@@ -221,6 +266,27 @@ export default function Bilan() {
                 <strong>{eur(order.total_amount)}</strong>
               </button>
             ))}
+            <div className="history-pager">
+              <button
+                type="button"
+                disabled={historyOffset === 0}
+                onClick={() => setHistoryOffset(Math.max(0, historyOffset - HISTORY_PAGE_SIZE))}
+              >
+                Précédentes
+              </button>
+              <small>
+                {page.total === 0
+                  ? "Aucune commande"
+                  : `${page.offset + 1}–${Math.min(page.offset + page.limit, page.total)} sur ${page.total}`}
+              </small>
+              <button
+                type="button"
+                disabled={page.offset + page.limit >= page.total}
+                onClick={() => setHistoryOffset(historyOffset + HISTORY_PAGE_SIZE)}
+              >
+                Suivantes
+              </button>
+            </div>
           </div>
         )}
       </AsyncSection>

@@ -19,6 +19,10 @@ export interface OrderListRow {
    * fiscal snapshot.
    */
   created_by: number | null;
+  /** ORD-08: the author by name, so a history row does not need a second lookup. */
+  created_by_name: string | null;
+  /** ORD-11: what the discount took off, or null when there was none. */
+  discount_amount: string | null;
   notes: string | null;
   created_at: string;
   paid_at: string | null;
@@ -26,35 +30,99 @@ export interface OrderListRow {
   refunded_at: string | null;
 }
 
+export interface OrderHistoryFilters {
+  /** Terminal statuses only; `OPEN` is never history (see below). */
+  status?: "PAID" | "CANCELLED" | "REFUNDED";
+  /** Inclusive lower bound on when the order reached its terminal state. */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  limit: number;
+  offset: number;
+}
+
+export interface OrderHistoryPage {
+  orders: OrderListRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 /**
- * The establishment's sales history: orders that have reached a terminal
- * state.
+ * ORD-12: the establishment's sales history — filterable, paginated, and
+ * counted.
  *
  * `OPEN` tickets are excluded deliberately. Before ORD-02 no order could be
  * open, so listing every status was harmless; now a ticket being typed at a
  * table would appear in the Bilan's "dernières commandes" — a running total
  * with no payment method, sitting among real sales, under a heading that
- * says "encaissée". A ticket in progress is not history. ORD-12 replaces
- * this with the filterable, paginated endpoint the screen actually wants;
- * until then the filter belongs here, where the query is.
+ * says "encaissée". A ticket in progress is not history.
+ *
+ * Ordered and filtered on `settled_at`, the moment the order reached its
+ * terminal state, rather than on `created_at`: a ticket opened before
+ * midnight and paid after it belongs to the day it was paid, which is the
+ * question a history screen is actually asking.
+ *
+ * `total` is returned alongside the page because a paginator that cannot
+ * say how many rows there are can only offer "next" — never "3 of 12".
  */
+export async function listOrderHistory(
+  db: Queryable,
+  locationId: number,
+  filters: OrderHistoryFilters,
+): Promise<OrderHistoryPage> {
+  const conditions = ["o.location_id = $1", "o.status <> 'OPEN'"];
+  const values: unknown[] = [locationId];
+
+  if (filters.status) {
+    values.push(filters.status);
+    conditions.push(`o.status = $${values.length}`);
+  }
+  if (filters.from) {
+    values.push(filters.from);
+    conditions.push(`COALESCE(o.paid_at, o.cancelled_at, o.created_at) >= $${values.length}`);
+  }
+  if (filters.to) {
+    values.push(filters.to);
+    conditions.push(`COALESCE(o.paid_at, o.cancelled_at, o.created_at) < $${values.length}`);
+  }
+  const where = conditions.join(" AND ");
+
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT COUNT(*)::TEXT AS total FROM orders o WHERE ${where}`,
+    values,
+  );
+
+  const { rows } = await db.query<OrderListRow>(
+    `SELECT o.id, o.order_number, o.table_id, t.name AS table_name, o.status, o.payment_method,
+            o.cash_amount, o.card_amount, o.total_amount, o.subtotal_amount, o.tax_amount,
+            o.discount_amount, o.created_by, u.name AS created_by_name, o.notes, o.created_at,
+            o.paid_at, o.cancelled_at, o.refunded_at
+     FROM orders o
+     LEFT JOIN dining_tables t ON t.id = o.table_id AND t.location_id = o.location_id
+     LEFT JOIN users u ON u.id = o.created_by
+     WHERE ${where}
+     ORDER BY COALESCE(o.paid_at, o.cancelled_at, o.created_at) DESC, o.id DESC
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, filters.limit, filters.offset],
+  );
+
+  return {
+    orders: rows,
+    total: Number(countRows[0].total),
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
+/** Convenience wrapper kept for callers that only want the most recent page. */
 export async function listOrders(
   db: Queryable,
   locationId: number,
   limit = 100,
 ): Promise<OrderListRow[]> {
-  const { rows } = await db.query<OrderListRow>(
-    `SELECT o.id, o.order_number, o.table_id, t.name AS table_name, o.status, o.payment_method,
-            o.cash_amount, o.card_amount, o.total_amount, o.subtotal_amount, o.tax_amount,
-            o.created_by, o.notes, o.created_at, o.paid_at, o.cancelled_at, o.refunded_at
-     FROM orders o
-     LEFT JOIN dining_tables t ON t.id = o.table_id
-     WHERE o.location_id = $1 AND o.status <> 'OPEN'
-     ORDER BY o.created_at DESC
-     LIMIT $2`,
-    [locationId, limit],
-  );
-  return rows;
+  const page = await listOrderHistory(db, locationId, { limit, offset: 0 });
+  return page.orders;
 }
 
 /**

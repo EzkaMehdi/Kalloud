@@ -640,36 +640,40 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Mise en œuvre : `POST /api/orders/:id/refund`, permission `orders:refund`, clé d'idempotence obligatoire — un remboursement déplace de l'argent. Chaque ligne `REFUND` est rattachée au `CHARGE` qu'elle inverse ; les charges d'origine ne sont jamais modifiées. Total ou partiel selon `DEC-03` : seul un remboursement couvrant tout le solde fait passer la commande en `REFUNDED`. Le CA net et les espèces attendues sont recalculés depuis le **registre des paiements** et non depuis `orders.total_amount`, qui conserve le montant d'origine par construction.
   - Limite assumée : le stock n'est rendu que sur un remboursement **total**. Un remboursement partiel est un montant, pas une liste d'articles — rien ne dit quels produits sont revenus, et inscrire une supposition au ledger corromprait le seul chiffre que l'écran de stock existe pour énoncer.
 
-- [ ] **`ORD-11` — Implémenter les remises encadrées**
+- [x] **`ORD-11` — Implémenter les remises encadrées**
   - Priorité : `P1`
   - Dépend de : `DEC-05`, `SALE-03`, `SEC-05`, `SEC-09`
   - Livrable : règles de remise, motif et autorisation.
   - Acceptation : remise incluse dans total, taxes, reçu et audit.
+  - Mise en œuvre : `PUT /api/tickets/:id/discount`, permission `orders:discount`, montant fixe ou pourcentage, motif obligatoire (migration 0014 refuse toute combinaison partielle). Le montant est **figé** à l'application — un pourcentage recalculé plus tard donnerait un autre chiffre sur un justificatif déjà émis — et **re-résolu** si les lignes changent. `DEC-05` appliquant la remise avant la taxe, elle est répartie sur les lignes au prorata (méthode du plus fort reste, `lib/money-allocation.ts`) pour que la ventilation par taux du justificatif décrive des montants réellement facturés.
 
-- [ ] **`ORD-12` — Construire l’historique réel des commandes**
+- [x] **`ORD-12` — Construire l’historique réel des commandes**
   - Priorité : `P0`
   - Dépend de : `ORD-02`, `ORD-09`, `ORD-10`
   - Livrable : endpoint filtrable et paginé avec détail.
   - Acceptation : remplace toutes les commandes codées en dur.
+  - Mise en œuvre : `GET /api/orders` filtrable par statut et par période, paginé, et renvoyant le total — un paginateur incapable de dire combien de lignes existent ne peut proposer que « suivant ». Le tri et le filtre portent sur le moment où la commande a atteint son état final, pas sur son ouverture : un ticket ouvert avant minuit et payé après appartient au jour où il a été payé. Remplace le « 100 dernières, on en affiche 8 » qui était le dernier endroit codé en dur de l'historique.
 
-- [ ] **`ORD-13` — Tester le cycle complet d’un ticket**
+- [x] **`ORD-13` — Tester le cycle complet d’un ticket**
   - Priorité : `P0`
   - Dépend de : `ORD-05`, `ORD-06`, `ORD-07`, `ORD-09`, `ORD-10`, `ORD-12`
   - Livrable : tests création, reprise, multi-appareil, annulation, paiement, remboursement et rechargement.
   - Acceptation : aucun ticket perdu et aucune table bloquée.
+  - Mise en œuvre : `tests/e2e/ticket-lifecycle.spec.ts` parcourt ouverture → remplissage → remise → **rechargement complet** → paiement → remboursement dans un vrai navigateur, et `tests/integration/discounts-history.test.ts` la même trajectoire au niveau service, plus les transitions que `DEC-03` interdit. Vérifié à chaque étape : aucun ticket perdu, aucune table bloquée, une trace d'audit par opération.
 
-- [ ] **`ORD-14` — Tester notes, remises, taxes et audit**
+- [x] **`ORD-14` — Tester notes, remises, taxes et audit**
   - Priorité : `P1`
   - Dépend de : `ORD-08`, `ORD-09`, `ORD-11`, `ORD-13`
   - Livrable : tests des informations complémentaires qui modifient le total ou le justificatif.
   - Acceptation : remise, TVA, notes, reçu et événements d’audit se réconcilient avec la commande.
+  - Mise en œuvre : la réconciliation est testée explicitement — les bandes de TVA du justificatif somment exactement la taxe persistée sur la commande, chaque bande vérifie HT + TVA = TTC, et le total remisé se retrouve à l'identique dans le CA de la journée, sur le justificatif et dans le journal d'audit.
 
 ### `GATE-4A` — Salle exploitable
 
-- [ ] Toute table occupée possède un ticket ouvert.
-- [ ] Tout ticket ouvert est reprenable après rafraîchissement.
-- [ ] Annulation, paiement et remboursement laissent une trace.
-- [ ] La vente directe n’existe qu’une seule fois.
+- [x] Toute table occupée possède un ticket ouvert. (`ORD-03` — dérivé, la colonne de statut est supprimée)
+- [x] Tout ticket ouvert est reprenable après rafraîchissement. (`ORD-04`, prouvé par un rechargement navigateur)
+- [x] Annulation, paiement et remboursement laissent une trace. (`ORD-06`, `ORD-10`, journal d'audit avec acteur et motif)
+- [x] La vente directe n’existe qu’une seule fois. (`ORD-07` — un ticket sans table, plus aucun chemin parallèle vers `PAID`)
 
 ## 10. Phase 4B — Configuration de l’établissement
 

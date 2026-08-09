@@ -307,3 +307,86 @@ export const refundOrderSchema = z.strictObject({
   amount: moneyAmountSchema.optional(),
 });
 export type RefundOrderBody = z.infer<typeof refundOrderSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Discounts (ORD-11)                                                          */
+/* -------------------------------------------------------------------------- */
+
+export const DISCOUNT_TYPES = ["FIXED", "PERCENT"] as const;
+export const discountTypeSchema = z.enum(DISCOUNT_TYPES, {
+  error: 'Type de remise invalide (attendu "FIXED" ou "PERCENT").',
+});
+
+/**
+ * ORD-11/DEC-05: "montant fixe ou pourcentage, motif obligatoire". Setting
+ * `discount: null` removes it, which is why the route body wraps it — an
+ * absent field and a cleared discount are different intents, exactly as for
+ * a ticket's note.
+ */
+export const discountSchema = z
+  .strictObject({
+    type: discountTypeSchema,
+    value: moneyAmountSchema,
+    reason: shortTextSchema(255, "Le motif de la remise"),
+  })
+  .superRefine((body, ctx) => {
+    if (body.value <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: "La remise doit être supérieure à zéro.",
+      });
+    }
+    // A percentage arrives in cents like every other money value (10 % is
+    // 1000), so 100 % is 10000.
+    if (body.type === "PERCENT" && body.value > 10_000) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["value"],
+        message: "Une remise en pourcentage ne peut pas dépasser 100 %.",
+      });
+    }
+  });
+
+export const setDiscountSchema = z.strictObject({
+  version: z
+    .number({ error: "Version du ticket manquante." })
+    .int({ error: "Version du ticket invalide." })
+    .min(1, { error: "Version du ticket invalide." }),
+  discount: discountSchema.nullable(),
+});
+export type SetDiscountBody = z.infer<typeof setDiscountSchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Order history (ORD-12)                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * ORD-12: filters for the sales history. Not strict — a query string picks
+ * up parameters from proxies and link trackers, and refusing a request over
+ * an unread `?utm_source=` would be a bug, not a safety feature.
+ *
+ * `OPEN` is absent from the status enum on purpose: a ticket in progress is
+ * not history, so there is no filter value that could ask for one.
+ */
+export const orderHistoryQuerySchema = z.object({
+  status: z
+    .enum(["PAID", "CANCELLED", "REFUNDED"], {
+      error: 'Statut invalide (attendu "PAID", "CANCELLED" ou "REFUNDED").',
+    })
+    .optional(),
+  from: z.iso.datetime({ offset: true, error: "Date de début invalide." }).optional(),
+  to: z.iso.datetime({ offset: true, error: "Date de fin invalide." }).optional(),
+  limit: z.coerce
+    .number({ error: "Limite invalide." })
+    .int({ error: "Limite invalide." })
+    .min(1, { error: "Limite invalide." })
+    .max(200, { error: "La limite ne peut pas dépasser 200." })
+    .default(20),
+  offset: z.coerce
+    .number({ error: "Décalage invalide." })
+    .int({ error: "Décalage invalide." })
+    .min(0, { error: "Décalage invalide." })
+    .default(0),
+});
+export type OrderHistoryQuery = z.infer<typeof orderHistoryQuerySchema>;

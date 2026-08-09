@@ -11,16 +11,18 @@ import {
   cancelTicket as cancelTicketRow,
   createOpenTicket,
   findOpenTicketForTable,
+  findTicketById,
   listOpenCounterTickets,
   loadTicket,
   lockTicket,
   refreshTicketTotal,
   replaceTicketItems,
+  setTicketDiscount,
   setTicketNotes,
   type Ticket,
 } from "../repositories/tickets";
 import type { RequestContext } from "../context";
-import type { CancelTicketBody, SaveTicketItemsBody } from "../validation/schemas";
+import type { CancelTicketBody, SaveTicketItemsBody, SetDiscountBody } from "../validation/schemas";
 
 /**
  * ORD-02/ORD-04/ORD-05: the open ticket's lifecycle up to (but not
@@ -210,7 +212,28 @@ export async function saveTicketItems(
     // version is stale never reaches this, because the UPDATE matches no row
     // and the whole transaction rolls back with its line changes.
     await bumpTicketVersion(client, context.locationId, orderId, input.version);
-    await refreshTicketTotal(client, context.locationId, orderId);
+    const newTotal = await refreshTicketTotal(client, context.locationId, orderId);
+
+    // ORD-11: a percentage discount is relative to the ticket, so changing
+    // the lines changes what it is worth. Re-resolving it here is what stops
+    // a "10 %" set on a 20 € ticket from staying frozen at 2 € once the
+    // ticket reaches 50 €.
+    if (locked.status === "OPEN") {
+      const current = await findTicketById(client, context.locationId, orderId);
+      if (current?.discount_type && current.discount_value) {
+        await setTicketDiscount(client, context.locationId, orderId, {
+          type: current.discount_type,
+          value: current.discount_value,
+          amount: fromCents(
+            resolveDiscountCents(
+              { type: current.discount_type, value: toCents(current.discount_value) },
+              toCents(newTotal),
+            ),
+          ),
+          reason: current.discount_reason!,
+        });
+      }
+    }
 
     const ticket = await loadTicket(client, context.locationId, orderId);
     return ticket!;
@@ -303,4 +326,86 @@ export function ticketTotalCents(ticket: Ticket): number {
 /** Formats a cents total back into the DECIMAL string shape the API returns. */
 export function formatTicketTotal(cents: number): string {
   return fromCents(cents);
+}
+
+/**
+ * ORD-11: applies or clears a bounded discount on an open ticket.
+ *
+ * The amount is resolved here, against the ticket's current total, and
+ * stored — a percentage recomputed later against a different total would
+ * print a different figure on a receipt for a sale that already happened
+ * (see migration 0014). Changing the ticket's lines afterwards re-resolves
+ * it, which is why `saveTicketItems` recomputes it too.
+ *
+ * Reserved to OWNER/MANAGER at the route (`orders:discount`, DEC-07): a
+ * discount is money given away, and DEC-05 puts it on the same footing as a
+ * refund rather than as routine service work.
+ */
+export async function setTicketDiscountAmount(
+  context: RequestContext,
+  orderId: number,
+  input: SetDiscountBody,
+): Promise<Ticket> {
+  return withTransaction(async (client) => {
+    const locked = await lockTicket(client, context.locationId, orderId);
+    if (!locked) {
+      throw new NotFoundError("Ticket introuvable.");
+    }
+    if (locked.status !== "OPEN") {
+      throw new ValidationError(
+        "Ce ticket n'est plus modifiable : il a déjà été encaissé ou annulé.",
+      );
+    }
+
+    const before = await loadTicket(client, context.locationId, orderId);
+    const totalCents = toCents(before!.total_amount);
+    const resolved = input.discount
+      ? {
+          type: input.discount.type,
+          value: fromCents(input.discount.value),
+          amount: fromCents(resolveDiscountCents(input.discount, totalCents)),
+          reason: input.discount.reason,
+        }
+      : null;
+
+    await setTicketDiscount(client, context.locationId, orderId, resolved);
+    await bumpTicketVersion(client, context.locationId, orderId, input.version);
+
+    await recordAuditEvent(client, {
+      locationId: context.locationId,
+      actorUserId: context.userId,
+      action: resolved ? "order.discount" : "order.discount_removed",
+      targetType: "order",
+      targetId: orderId,
+      before: { discount: before!.discount_amount },
+      after: resolved
+        ? {
+            type: resolved.type,
+            value: resolved.value,
+            amount: resolved.amount,
+            reason: resolved.reason,
+          }
+        : null,
+    });
+
+    const ticket = await loadTicket(client, context.locationId, orderId);
+    return ticket!;
+  });
+}
+
+/**
+ * A discount can never exceed the order it applies to: DEC-05 describes it
+ * as included in the total, and a negative total is not a sale — it is a
+ * refund wearing a disguise (ORD-10 is how money goes back).
+ */
+export function resolveDiscountCents(
+  discount: { type: "FIXED" | "PERCENT"; value: number },
+  totalCents: number,
+): number {
+  const raw =
+    discount.type === "FIXED"
+      ? discount.value
+      : // `value` is in cents-of-a-percent: 10 % arrives as 1000.
+        Math.round((totalCents * discount.value) / 10_000);
+  return Math.min(raw, totalCents);
 }

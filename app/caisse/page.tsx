@@ -9,6 +9,7 @@ import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
 import { ApiError, apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
+import { useCurrentUser } from "@/lib/client/use-current-user";
 
 /**
  * ORD-03: occupancy is derived server-side from the table's open ticket —
@@ -47,6 +48,9 @@ export default function Caisse() {
   );
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
+  const user = useCurrentUser();
+  // DEC-07: `orders:discount` is OWNER/MANAGER.
+  const canDiscount = user?.role === "OWNER" || user?.role === "MANAGER";
   const [opening, setOpening] = useState(false);
   const [notice, setNotice] = useState("");
   const [movementOpen, setMovementOpen] = useState(false);
@@ -303,6 +307,7 @@ export default function Caisse() {
             counterQuery.refetch();
           }}
           onComplete={done}
+          canDiscount={canDiscount}
           onCancelled={() => {
             setTicket(null);
             tablesQuery.refetch();

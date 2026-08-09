@@ -6,7 +6,14 @@ import { extractTaxCents, fromCents, toCents } from "../money";
 import { getActiveBusinessDay } from "../repositories/business-days";
 import { recordCharge } from "../repositories/payments";
 import { lockProductsForSale } from "../repositories/products";
-import { listTicketItems, lockTicket, type TicketItemRow } from "../repositories/tickets";
+import {
+  findTicketById,
+  listTicketItems,
+  lockTicket,
+  type TicketItemRow,
+} from "../repositories/tickets";
+import { allocateProportionally } from "../money-allocation";
+import { resolveDiscountCents } from "./tickets";
 import { decrementStockAtomically } from "./stock";
 import type { RequestContext } from "../context";
 import type { PaymentMethod } from "../validation/primitives";
@@ -138,7 +145,11 @@ async function lockOpenTicketForPayment(
   client: PoolClient,
   locationId: number,
   orderId: number,
-): Promise<{ id: number; items: TicketItemRow[] }> {
+): Promise<{
+  id: number;
+  items: TicketItemRow[];
+  discount: { type: "FIXED" | "PERCENT"; value: number } | null;
+}> {
   const locked = await lockTicket(client, locationId, orderId);
   if (!locked) {
     throw new NotFoundError("Ticket introuvable.");
@@ -150,7 +161,15 @@ async function lockOpenTicketForPayment(
         : "Ce ticket a été annulé et ne peut plus être encaissé.",
     );
   }
-  return { id: locked.id, items: await listTicketItems(client, orderId) };
+  const row = await findTicketById(client, locationId, orderId);
+  return {
+    id: locked.id,
+    items: await listTicketItems(client, orderId),
+    discount:
+      row?.discount_type && row.discount_value
+        ? { type: row.discount_type, value: toCents(row.discount_value) }
+        : null,
+  };
 }
 
 /**
@@ -204,11 +223,15 @@ export async function performCheckout(
       productId: number;
       quantity: number;
       unitPriceCents: number;
+      discountCents: number;
       taxRatePercent: string;
       notes: string | null;
     }[] = [];
 
-    for (const item of mergedItems) {
+    // Priced first, discounted second, taxed third — DEC-05's order:
+    // "Elle est appliquée avant le calcul de la taxe (recalcul TTC/HT/TVA
+    // après remise)".
+    const pricedLines = mergedItems.map((item) => {
       const product = pricingById.get(item.productId);
       if (!product) {
         // Not found and inactive are indistinguishable here on purpose —
@@ -217,16 +240,39 @@ export async function performCheckout(
         throw new NotFoundError("Produit introuvable.");
       }
       const unitPriceCents = toCents(product.price);
-      const lineTotalCents = unitPriceCents * item.quantity;
-      const lineTaxCents = extractTaxCents(lineTotalCents, Number(product.tax_rate_percent));
-      totalCents += lineTotalCents;
-      taxCents += lineTaxCents;
-      resolvedItems.push({
+      return {
         productId: item.productId,
         quantity: item.quantity,
         unitPriceCents,
+        lineTotalCents: unitPriceCents * item.quantity,
         taxRatePercent: product.tax_rate_percent,
         notes: item.notes,
+      };
+    });
+
+    const grossCents = pricedLines.reduce((sum, line) => sum + line.lineTotalCents, 0);
+    const discountCents = ticket.discount ? resolveDiscountCents(ticket.discount, grossCents) : 0;
+    // ORD-11: an order-level discount has to be shared across the lines
+    // before each line's tax can be extracted, or the receipt's per-rate
+    // breakdown would describe amounts nobody was charged. Largest-remainder
+    // so the shares sum to the discount exactly, to the centime.
+    const lineDiscounts = allocateProportionally(
+      pricedLines.map((line) => line.lineTotalCents),
+      discountCents,
+    );
+
+    for (const [index, line] of pricedLines.entries()) {
+      const netLineCents = line.lineTotalCents - lineDiscounts[index];
+      const lineTaxCents = extractTaxCents(netLineCents, Number(line.taxRatePercent));
+      totalCents += netLineCents;
+      taxCents += lineTaxCents;
+      resolvedItems.push({
+        productId: line.productId,
+        quantity: line.quantity,
+        unitPriceCents: line.unitPriceCents,
+        discountCents: lineDiscounts[index],
+        taxRatePercent: line.taxRatePercent,
+        notes: line.notes,
       });
     }
     const subtotalCents = totalCents - taxCents;
@@ -251,6 +297,10 @@ export async function performCheckout(
       `UPDATE orders
        SET status = 'PAID', payment_method = $3, cash_amount = $4, card_amount = $5,
            subtotal_amount = $6, tax_amount = $7, total_amount = $8,
+           -- ORD-11: freeze what the discount actually took off this order.
+           -- Left NULL when there is none, so migration 0014's "all four
+           -- columns or none" constraint still holds.
+           discount_amount = CASE WHEN discount_type IS NULL THEN NULL ELSE $10::DECIMAL(10, 2) END,
            business_day_id = COALESCE(business_day_id, $9), paid_at = now(), version = version + 1
        WHERE location_id = $1 AND id = $2 AND status = 'OPEN'
        RETURNING id, order_number, table_id, status, payment_method, cash_amount, card_amount, subtotal_amount, tax_amount, total_amount, created_at, paid_at`,
@@ -264,6 +314,7 @@ export async function performCheckout(
         fromCents(taxCents),
         fromCents(totalCents),
         businessDay.id,
+        fromCents(discountCents),
       ],
     );
     // The lines are already there and already priced; rewrite them so the
@@ -272,13 +323,14 @@ export async function performCheckout(
 
     for (const item of resolvedItems) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, tax_rate_percent, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, discount_amount, tax_rate_percent, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           order.id,
           item.productId,
           item.quantity,
           fromCents(item.unitPriceCents),
+          fromCents(item.discountCents),
           // ORD-09: snapshotted with the price, so the receipt's per-rate
           // breakdown states what was charged rather than what today's
           // catalog would charge.

@@ -1145,3 +1145,29 @@ button.order-row {
 button.order-row:hover {
   background: #f6f8f7;
 }
+
+/* ORD-12: the history's pager. */
+.history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 2px;
+}
+.history-pager button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: white;
+  color: #445048;
+  font-weight: 600;
+  cursor: pointer;
+}
+.history-pager button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.history-pager small {
+  color: #6b7a71;
+}

@@ -22,6 +22,15 @@ export interface TicketItemRow {
   is_available: boolean;
 }
 
+export interface TicketDiscount {
+  type: "FIXED" | "PERCENT";
+  /** As entered: a cent amount for FIXED, hundredths of a percent for PERCENT. */
+  value: string;
+  /** What it actually took off this order, in euros — see migration 0014. */
+  amount: string;
+  reason: string;
+}
+
 export interface TicketRow {
   id: number;
   order_number: number;
@@ -36,6 +45,10 @@ export interface TicketRow {
   created_by_name: string | null;
   version: number;
   created_at: string;
+  discount_type: "FIXED" | "PERCENT" | null;
+  discount_value: string | null;
+  discount_amount: string | null;
+  discount_reason: string | null;
 }
 
 export interface Ticket extends TicketRow {
@@ -45,7 +58,8 @@ export interface Ticket extends TicketRow {
 const TICKET_SELECT = `
   SELECT o.id, o.order_number, o.location_id, o.table_id, t.name AS table_name,
          o.business_day_id, o.status, o.total_amount, o.notes, o.created_by,
-         u.name AS created_by_name, o.version, o.created_at
+         u.name AS created_by_name, o.version, o.created_at,
+         o.discount_type, o.discount_value, o.discount_amount, o.discount_reason
   FROM orders o
   LEFT JOIN dining_tables t ON t.id = o.table_id AND t.location_id = o.location_id
   LEFT JOIN users u ON u.id = o.created_by
@@ -257,6 +271,31 @@ export async function listOpenCounterTickets(
     [locationId],
   );
   return rows;
+}
+
+/**
+ * ORD-11: stores (or clears) the order's discount. All four columns move
+ * together — migration 0014's CHECK refuses any other combination.
+ */
+export async function setTicketDiscount(
+  db: Queryable,
+  locationId: number,
+  orderId: number,
+  discount: { type: string; value: string; amount: string; reason: string } | null,
+): Promise<void> {
+  await db.query(
+    `UPDATE orders
+     SET discount_type = $3, discount_value = $4, discount_amount = $5, discount_reason = $6
+     WHERE location_id = $1 AND id = $2`,
+    [
+      locationId,
+      orderId,
+      discount?.type ?? null,
+      discount?.value ?? null,
+      discount?.amount ?? null,
+      discount?.reason ?? null,
+    ],
+  );
 }
 
 /** ORD-08: stores the order's own note. `null` clears it. */

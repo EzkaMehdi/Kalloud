@@ -21,6 +21,8 @@ interface ReceiptLine {
   quantity: number;
   unit_price: string;
   line_total: string;
+  line_discount: string;
+  line_net: string;
   tax_rate_percent: string | null;
   notes: string | null;
 }
@@ -52,6 +54,7 @@ interface Receipt {
   subtotal_amount: string | null;
   tax_amount: string | null;
   total_amount: string;
+  discount: { type: string; value: string; amount: string; reason: string } | null;
   tax_bands: TaxBand[];
   payments: PaymentLine[];
   net_paid: { cash: string; card: string; total: string };
@@ -168,6 +171,22 @@ export function ReceiptDialog({
                   <b>{eur(line.line_total)}</b>
                 </div>
               ))}
+              {/* ORD-11: the discount is shown as its own line, between the
+                  gross lines and the total, so the customer can see what
+                  they were quoted and what they were charged. */}
+              {receipt.discount && (
+                <div className="ticket-line">
+                  <div>
+                    <b>
+                      Remise
+                      {receipt.discount.type === "PERCENT" &&
+                        ` (${Number(receipt.discount.value).toFixed(2).replace(".", ",")} %)`}
+                    </b>
+                    <small>{receipt.discount.reason}</small>
+                  </div>
+                  <b>− {eur(receipt.discount.amount)}</b>
+                </div>
+              )}
               <div className="ticket-total">
                 <span>Total TTC</span>
                 <span>{eur(receipt.total_amount)}</span>

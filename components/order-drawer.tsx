@@ -44,6 +44,10 @@ export interface Ticket {
   total_amount: string;
   version: number;
   items: TicketItem[];
+  notes: string | null;
+  /** ORD-11: what the discount currently takes off this ticket, if any. */
+  discount_amount: string | null;
+  discount_reason: string | null;
 }
 
 const ALL_CATEGORIES = "Tout";
@@ -77,6 +81,7 @@ export function OrderDrawer({
   onClose,
   onComplete,
   onCancelled,
+  canDiscount,
 }: {
   /**
    * ORD-04: the drawer is opened *on* a ticket that already exists
@@ -95,6 +100,8 @@ export function OrderDrawer({
   onComplete: (total: number, replayed?: boolean) => void;
   /** ORD-06: the ticket was cancelled — the table is free and nothing was charged. */
   onCancelled: () => void;
+  /** DEC-07: `orders:discount` is OWNER/MANAGER — a cashier rings up, but does not decide to charge less. */
+  canDiscount: boolean;
 }) {
   const [category, setCategory] = useState(ALL_CATEGORIES);
   const [ticket, setTicket] = useState<Ticket>(initialTicket);
@@ -139,6 +146,11 @@ export function OrderDrawer({
   /** ORD-06: the cancellation form, opened only on explicit intent. */
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  /** ORD-11: the discount form, opened only on explicit intent. */
+  const [discounting, setDiscounting] = useState(false);
+  const [discountValue, setDiscountValue] = useState("");
+  const [discountType, setDiscountType] = useState<"FIXED" | "PERCENT">("FIXED");
+  const [discountReason, setDiscountReason] = useState("");
 
   // SALE-01/SALE-04: the same scoped, real catalog the stock screen reads —
   // no separate constant that could drift from it (P0-03: the old local
@@ -289,6 +301,47 @@ export function OrderDrawer({
       onCancelled();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Impossible d'annuler le ticket.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * ORD-11: applies or clears the discount. Goes through the same optimistic
+   * version as the lines, because a discount is part of the ticket's state —
+   * two devices must not set one against a line list that has since changed.
+   */
+  async function applyDiscount(clear: boolean) {
+    if (!clear && (!discountValue.trim() || !discountReason.trim())) {
+      setError("Indiquez un montant et un motif de remise.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await apiFetch<Ticket>(`/api/tickets/${ticket.id}/discount`, {
+        method: "PUT",
+        body: JSON.stringify({
+          version: ticket.version,
+          discount: clear
+            ? null
+            : {
+                type: discountType,
+                value: Number(discountValue).toFixed(2),
+                reason: discountReason.trim(),
+              },
+        }),
+      });
+      setTicket(updated);
+      setDraft(toDraft(updated));
+      setDiscounting(false);
+      setDiscountValue("");
+      setDiscountReason("");
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 409) {
+        setConflict(true);
+      }
+      setError(caught instanceof ApiError ? caught.message : "Impossible d'appliquer la remise.");
     } finally {
       setSaving(false);
     }
@@ -557,6 +610,81 @@ export function OrderDrawer({
               : `Encaisser · ${total.toFixed(2)} €`}
         </button>
       )}
+      {canDiscount &&
+        !conflict &&
+        !cancelling &&
+        ticket.items.length > 0 &&
+        (discounting ? (
+          <div className="cancel-ticket">
+            <div className="checkout" role="radiogroup" aria-label="Type de remise">
+              <button
+                role="radio"
+                aria-checked={discountType === "FIXED"}
+                className={`pay-option ${discountType === "FIXED" ? "active" : ""}`}
+                onClick={() => setDiscountType("FIXED")}
+              >
+                Montant €
+              </button>
+              <button
+                role="radio"
+                aria-checked={discountType === "PERCENT"}
+                className={`pay-option ${discountType === "PERCENT" ? "active" : ""}`}
+                onClick={() => setDiscountType("PERCENT")}
+              >
+                Pourcentage %
+              </button>
+            </div>
+            <TextField
+              label={discountType === "FIXED" ? "Remise (€)" : "Remise (%)"}
+              inputMode="decimal"
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={discountValue}
+              onChange={(event) => setDiscountValue(event.target.value)}
+              autoFocus
+              required
+            />
+            <TextField
+              label="Motif de la remise"
+              value={discountReason}
+              onChange={(event) => setDiscountReason(event.target.value)}
+              placeholder="Ex. Client fidèle"
+              required
+            />
+            <div className="cancel-actions">
+              <button onClick={() => setDiscounting(false)} disabled={saving}>
+                Revenir
+              </button>
+              <button
+                onClick={() => applyDiscount(false)}
+                disabled={saving}
+                className="primary-button"
+              >
+                {saving ? "Application…" : "Appliquer la remise"}
+              </button>
+            </div>
+          </div>
+        ) : ticket.discount_amount ? (
+          <div className="ticket-line" style={{ marginTop: 10 }}>
+            <div>
+              <b>Remise appliquée</b>
+              <small>{ticket.discount_reason}</small>
+            </div>
+            <button onClick={() => applyDiscount(true)} disabled={saving} className="link-button">
+              Retirer (−{Number(ticket.discount_amount).toFixed(2).replace(".", ",")} €)
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setDiscounting(true)}
+            disabled={saving || syncing}
+            className="link-button"
+            style={{ width: "100%", marginTop: 8 }}
+          >
+            Appliquer une remise
+          </button>
+        ))}
       {!conflict && !cancelling && (
         // ORD-06: always available, including on an empty ticket — an
         // abandoned counter sale with no lines still needs a way to be

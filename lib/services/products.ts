@@ -1,4 +1,5 @@
 import { withTransaction } from "../db";
+import { recordAuditEvent } from "../audit";
 import { createProduct, type CreateProductInput, type ProductRow } from "../repositories/products";
 import { recordStockMovement } from "../repositories/stock-movements";
 import type { RequestContext } from "../context";
@@ -26,6 +27,18 @@ export async function createProductWithInitialStock(
     const product = await createProduct(client, context.locationId, {
       ...input,
       stockQuantity: 0,
+    });
+
+    // CFG-02: "changements audités" — creating a product is a catalogue
+    // change like any other, and the audit log is where a manager finds out
+    // who added it and at what price.
+    await recordAuditEvent(client, {
+      locationId: context.locationId,
+      actorUserId: context.userId,
+      action: "product.create",
+      targetType: "product",
+      targetId: product.id,
+      after: { name: product.name, price: product.price, initialStock },
     });
 
     if (initialStock === 0) {

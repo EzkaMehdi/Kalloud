@@ -15,7 +15,7 @@ import { isRateLimited } from "@/lib/security/rate-limit";
  * lib/context.ts (SEC-04) before touching any data.
  */
 
-const PROTECTED_PAGE_PREFIXES = ["/caisse", "/stock", "/bilan"];
+const PROTECTED_PAGE_PREFIXES = ["/caisse", "/stock", "/bilan", "/configuration"];
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const MAX_REQUEST_BODY_BYTES = 1_000_000; // 1MB hard ceiling; routes enforce a tighter limit for their own payloads.
 /**

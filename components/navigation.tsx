@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, Package, ReceiptText } from "lucide-react";
+import { BarChart3, Package, ReceiptText, Settings } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { can, type Role } from "@/lib/authz";
@@ -9,6 +9,15 @@ const links = [
   { href: "/caisse", label: "Caisse", icon: ReceiptText, permission: "orders:create" as const },
   { href: "/stock", label: "Stock", icon: Package, permission: null },
   { href: "/bilan", label: "Bilan", icon: BarChart3, permission: "dashboard:view" as const },
+  // CFG-01..03: gated on `tables:manage` rather than `settings:manage` —
+  // a manager administers the catalogue and the floor plan, and the screen
+  // itself makes the owner-only settings read-only for them.
+  {
+    href: "/configuration",
+    label: "Réglages",
+    icon: Settings,
+    permission: "tables:manage" as const,
+  },
 ];
 
 export function Navigation({ role }: { role?: Role }) {

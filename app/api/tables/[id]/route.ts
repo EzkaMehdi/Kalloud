@@ -1,9 +1,8 @@
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
-import { pool } from "@/lib/db";
 import { apiRoute, jsonOk } from "@/lib/http";
-import { renameDiningTable } from "@/lib/repositories/tables";
+import { editDiningTableName, setDiningTableActivation } from "@/lib/services/configuration";
 import { parseIdParam, parseJsonBody } from "@/lib/validation/parse";
 import { updateDiningTableSchema } from "@/lib/validation/schemas";
 
@@ -12,13 +11,14 @@ interface RouteParams {
 }
 
 /**
- * Renaming a table is floor-plan configuration ("tables:manage", OWNER/
- * MANAGER only). The FREE/OCCUPIED branch this handler used to carry is
- * gone with ORD-03: occupancy is derived from the table's open ticket, so
- * there is no status left for a client to set — the browser's optimistic
- * `PATCH {status: "OCCUPIED"}`, which could leave a table occupied forever
- * when the order that justified it never happened, has no replacement by
- * design. Opening a ticket is `POST /api/tickets`.
+ * CFG-03: renaming or deactivating a table — both floor-plan configuration,
+ * gated by `tables:manage` (OWNER/MANAGER, DEC-07).
+ *
+ * The FREE/OCCUPIED branch this handler used to carry is gone with ORD-03:
+ * occupancy is derived from the table's open ticket, so there is no status
+ * for a client to set. Deactivation is refused while a ticket is open —
+ * silently hiding a table someone is still serving is exactly what CFG-03's
+ * acceptance criterion rules out.
  */
 export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params }) => {
   const context = await requireRequestContext();
@@ -28,6 +28,8 @@ export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params
   const tableId = parseIdParam(id, "Identifiant table");
   const body = await parseJsonBody(request, updateDiningTableSchema);
 
-  const table = await renameDiningTable(pool, context.locationId, tableId, body.name);
-  return jsonOk(table);
+  if (body.isActive !== undefined) {
+    return jsonOk(await setDiningTableActivation(context, tableId, { isActive: body.isActive }));
+  }
+  return jsonOk(await editDiningTableName(context, tableId, body.name!));
 });

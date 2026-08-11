@@ -1,4 +1,6 @@
 import { pool } from "../db";
+import { getLocationSettings } from "../repositories/settings";
+import { zonedTime, zonedToday } from "../time";
 import {
   getActiveBusinessDay,
   getBusinessDaySummary,
@@ -30,20 +32,25 @@ const EMPTY_SUMMARY: DashboardSummary = {
 };
 
 /**
- * Ports the prototype's `/api/dashboard` (now scoped by locationId). Period
- * boundaries still use the server's local date, not the establishment's
- * configured timezone (location_settings.timezone, CFG-00) — making every
- * period genuinely timezone-correct and clarifying "service en cours" vs.
- * calendar day is BI-03 (phase 6), not this port.
+ * CFG-01/GATE-4B: period boundaries are computed in the establishment's own
+ * timezone (`location_settings.timezone`), not the server's.
+ *
+ * This used to build `new Date(year, month - 1, 1)` — midnight where the
+ * server happens to be. On a UTC host serving a Paris restaurant, every
+ * month began two hours late, silently moving a late-evening sale into the
+ * following month's figures. "Fuseau réellement appliqué" is a GATE-4B
+ * criterion, so it is applied here rather than deferred.
+ *
+ * What remains for BI-03 (phase 6) is the harder question the comment this
+ * replaces was really about: whether "aujourd'hui" should mean the calendar
+ * day or the service, for an establishment that closes after midnight.
+ * `period=day` still answers with the open business day, which is the
+ * honest reading of "service en cours".
  */
 export async function getDashboardSummary(
   locationId: number,
   query: DashboardQuery,
 ): Promise<DashboardSummary> {
-  const today = new Date();
-  const year = query.year ?? today.getFullYear();
-  const month = query.month ?? today.getMonth() + 1;
-
   if (query.period === "day") {
     const activeDay = await getActiveBusinessDay(pool, locationId);
     if (activeDay) {
@@ -52,15 +59,20 @@ export async function getDashboardSummary(
     return EMPTY_SUMMARY;
   }
 
-  let from: Date;
-  let to: Date;
-  if (query.period === "year") {
-    from = new Date(year, 0, 1);
-    to = new Date(year + 1, 0, 1);
-  } else {
-    from = new Date(year, month - 1, 1);
-    to = new Date(year, month, 1);
-  }
+  const settings = await getLocationSettings(pool, locationId);
+  const timeZone = settings?.timezone ?? "Europe/Paris";
+  const today = zonedToday(timeZone);
+  const year = query.year ?? today.year;
+  const month = query.month ?? today.month;
+
+  const from =
+    query.period === "year" ? zonedTime(timeZone, year, 1, 1) : zonedTime(timeZone, year, month, 1);
+  const to =
+    query.period === "year"
+      ? zonedTime(timeZone, year + 1, 1, 1)
+      : month === 12
+        ? zonedTime(timeZone, year + 1, 1, 1)
+        : zonedTime(timeZone, year, month + 1, 1);
 
   return getRevenueBetween(pool, locationId, from, to);
 }

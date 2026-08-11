@@ -29,8 +29,10 @@ export const POST = apiRoute(async (request: NextRequest) => {
   // lib/services/products.ts for why.
   const product = await createProductWithInitialStock(context, {
     categoryId: body.categoryId ?? null,
+    taxClassId: body.taxClassId ?? null,
     name: body.name,
     price: fromCents(body.price),
+    unit: body.unit ?? null,
     stockQuantity: body.stockQuantity,
     alertThreshold: body.alertThreshold,
   });

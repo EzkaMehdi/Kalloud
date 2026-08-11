@@ -677,36 +677,40 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ## 10. Phase 4B — Configuration de l’établissement
 
-- [ ] **`CFG-01` — Gérer les paramètres de l’établissement**
+- [x] **`CFG-01` — Gérer les paramètres de l’établissement**
   - Priorité : `P0`
   - Dépend de : `CFG-00`, `SEC-04`, `SEC-05`, `UX-05`, `UX-06`
   - Livrable : écran pour nom, fuseau horaire, devise, règles fiscales retenues et seuil d’écart de caisse.
   - Acceptation : paramètres validés côté serveur, réservés au rôle autorisé et utilisés par caisse/dashboard.
+  - Mise en œuvre : `GET/PUT /api/settings` et l'écran `/configuration`, permission `settings:manage` (propriétaire seul, `DEC-07`). Nom et réglages vivent dans deux tables, donc l'écriture est une seule transaction. L'existence du fuseau est vérifiée contre les données du runtime plutôt que contre une liste codée en dur, qui deviendrait obsolète. Le fuseau est **réellement appliqué** : les bornes de période du tableau de bord se calculent désormais dans le fuseau de l'établissement (`lib/time.ts`) et non en heure serveur — sur un hôte UTC servant un établissement parisien, chaque mois commençait deux heures trop tard et déplaçait silencieusement une vente de fin de soirée dans le mois suivant.
 
-- [ ] **`CFG-02` — Gérer catégories et produits**
+- [x] **`CFG-02` — Gérer catégories et produits**
   - Priorité : `P0`
   - Dépend de : `SALE-01`, `SEC-05`, `SEC-06`, `SEC-09`, `UX-05`
   - Livrable : créer, modifier, activer/désactiver un produit, son prix, sa catégorie, sa classe fiscale, son unité et son seuil.
   - Acceptation : changements audités ; produit désactivé absent de la caisse mais conservé dans l’historique.
+  - Mise en œuvre : catégories créables et renommables avec leur classe fiscale, produits enrichis d'une classe fiscale, d'une unité et d'une catégorie modifiable. Toutes les mutations passent par `lib/services/configuration.ts` et sont auditées. La désactivation remplace la suppression : les lignes de commande passées pointent toujours sur la ligne produit, donc un justificatif imprimé un an plus tard nomme encore ce qui a été vendu.
 
-- [ ] **`CFG-03` — Gérer le plan de salle**
+- [x] **`CFG-03` — Gérer le plan de salle**
   - Priorité : `P0`
   - Dépend de : `ORD-03`, `SEC-05`, `SEC-06`, `SEC-09`, `UX-05`
   - Livrable : créer, renommer, ordonner et désactiver une table.
   - Acceptation : impossibilité de désactiver silencieusement une table avec ticket ouvert ; changements audités.
+  - Mise en œuvre : création, renommage, ordre d'affichage et désactivation. Le refus de désactiver une table portant un ticket ouvert est dans la clause `WHERE` de l'`UPDATE`, pas dans une lecture préalable : un ticket ouvert entre-temps par un autre appareil ne peut pas se glisser dans l'intervalle. Le plan de salle ne liste que les tables actives ; l'écran de configuration les voit toutes, pour pouvoir en réactiver une.
 
-- [ ] **`CFG-04` — Tester la configuration**
+- [x] **`CFG-04` — Tester la configuration**
   - Priorité : `P0`
   - Dépend de : `CFG-01`, `CFG-02`, `CFG-03`
   - Livrable : tests permissions, validation, historique et répercussion sur la caisse.
   - Acceptation : un manager non autorisé ne modifie pas les réglages réservés au propriétaire.
+  - Mise en œuvre : `tests/integration/configuration.test.ts` (22 cas) et `tests/e2e/configuration.spec.ts` (5 cas). La barrière de permission est vérifiée des deux côtés : l'écran rend le formulaire inerte pour un responsable **et** dit pourquoi, et le serveur renvoie 403 sur la même requête envoyée directement.
 
 ### `GATE-4B` — Établissement configurable
 
-- [ ] Le propriétaire configure son établissement sans SQL.
-- [ ] Catalogue, catégories et tables sont administrables.
-- [ ] Prix et désactivations conservent l’historique des ventes.
-- [ ] Fuseau, devise et règles fiscales sont réellement appliqués.
+- [x] Le propriétaire configure son établissement sans SQL. (`CFG-01` — écran `/configuration`)
+- [x] Catalogue, catégories et tables sont administrables. (`CFG-02`, `CFG-03`, chaque mutation auditée)
+- [x] Prix et désactivations conservent l’historique des ventes. (`CFG-02` — désactivation et non suppression ; le prix de vente est figé sur la ligne)
+- [x] Fuseau, devise et règles fiscales sont réellement appliqués. (`CFG-01` — bornes de période dans le fuseau de l’établissement, devise lue par l’interface, taux par défaut utilisé par l’encaissement)
 
 ## 11. Phase 5A — Caisse réconciliable
 

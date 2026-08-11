@@ -142,8 +142,12 @@ export async function lockProductsForSale(
 
 export interface CreateProductInput {
   categoryId: number | null;
+  /** CFG-02/DEC-05: overrides the category's class, which overrides the establishment default. */
+  taxClassId?: number | null;
   name: string;
   price: string;
+  /** CFG-02: how the product is counted ("bouteille", "part"), or null for plain units. */
+  unit?: string | null;
   stockQuantity?: number;
   alertThreshold?: number;
 }
@@ -156,14 +160,16 @@ export async function createProduct(
   const {
     rows: [row],
   } = await db.query<Omit<ProductRow, "category">>(
-    `INSERT INTO products (location_id, category_id, name, price, stock_quantity, alert_threshold)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO products (location_id, category_id, tax_class_id, name, price, unit, stock_quantity, alert_threshold)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id, category_id, name, price, stock_quantity, alert_threshold, is_active`,
     [
       locationId,
       input.categoryId,
+      input.taxClassId ?? null,
       input.name,
       input.price,
+      input.unit ?? null,
       input.stockQuantity ?? 0,
       input.alertThreshold ?? 5,
     ],
@@ -174,6 +180,9 @@ export async function createProduct(
 export interface UpdateProductInput {
   name?: string;
   price?: string;
+  categoryId?: number | null;
+  taxClassId?: number | null;
+  unit?: string | null;
   stockQuantity?: number;
   alertThreshold?: number;
   isActive?: boolean;
@@ -186,12 +195,19 @@ export async function updateProduct(
   input: UpdateProductInput,
 ): Promise<ProductRow> {
   const { rows } = await db.query<Omit<ProductRow, "category">>(
+    // COALESCE means "leave it alone when the caller said nothing". For the
+    // three nullable columns that is not enough — clearing a category is a
+    // real intent — so each carries an explicit "was it provided" flag
+    // rather than conflating null with absent (CFG-02).
     `UPDATE products
      SET name = COALESCE($3, name),
          price = COALESCE($4, price),
          stock_quantity = COALESCE($5, stock_quantity),
          alert_threshold = COALESCE($6, alert_threshold),
-         is_active = COALESCE($7, is_active)
+         is_active = COALESCE($7, is_active),
+         category_id = CASE WHEN $8 THEN $9::INT ELSE category_id END,
+         tax_class_id = CASE WHEN $10 THEN $11::INT ELSE tax_class_id END,
+         unit = CASE WHEN $12 THEN $13::VARCHAR ELSE unit END
      WHERE id = $1 AND location_id = $2
      RETURNING id, category_id, name, price, stock_quantity, alert_threshold, is_active`,
     [
@@ -202,6 +218,12 @@ export async function updateProduct(
       input.stockQuantity ?? null,
       input.alertThreshold ?? null,
       input.isActive ?? null,
+      input.categoryId !== undefined,
+      input.categoryId ?? null,
+      input.taxClassId !== undefined,
+      input.taxClassId ?? null,
+      input.unit !== undefined,
+      input.unit ?? null,
     ],
   );
   const row = rows[0];

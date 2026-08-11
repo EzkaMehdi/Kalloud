@@ -133,8 +133,12 @@ export type CheckoutItem = z.infer<typeof checkoutItemSchema>;
 
 export const createProductSchema = z.strictObject({
   categoryId: idSchema.nullish(),
+  /** CFG-02/DEC-05: a product's own class wins over its category's, which wins over the establishment default. */
+  taxClassId: idSchema.nullish(),
   name: shortTextSchema(150, "Le nom du produit"),
   price: moneyAmountSchema,
+  /** CFG-02: how the product is counted, so the stock screen can say "3 bouteilles". */
+  unit: shortTextSchema(20, "L'unité").nullish(),
   stockQuantity: stockQuantitySchema.optional(),
   alertThreshold: stockQuantitySchema.optional(),
 });
@@ -144,6 +148,9 @@ export const updateProductSchema = z
   .strictObject({
     name: shortTextSchema(150, "Le nom du produit").optional(),
     price: moneyAmountSchema.optional(),
+    categoryId: idSchema.nullish(),
+    taxClassId: idSchema.nullish(),
+    unit: shortTextSchema(20, "L'unité").nullish(),
     stockQuantity: stockQuantitySchema.optional(),
     alertThreshold: stockQuantitySchema.optional(),
     isActive: z.boolean({ error: "Statut d'activation invalide." }).optional(),
@@ -171,9 +178,15 @@ export type CreateDiningTableBody = z.infer<typeof createDiningTableSchema>;
  * change about a table is its name — floor-plan configuration, not service
  * activity.
  */
-export const updateDiningTableSchema = z.strictObject({
-  name: shortTextSchema(100, "Le nom de la table"),
-});
+export const updateDiningTableSchema = z
+  .strictObject({
+    name: shortTextSchema(100, "Le nom de la table").optional(),
+    /** CFG-03: deactivating keeps the table's history but removes it from the floor plan. */
+    isActive: z.boolean({ error: "Statut d'activation invalide." }).optional(),
+  })
+  .refine((body) => body.name !== undefined || body.isActive !== undefined, {
+    error: "Indiquez au moins un champ à modifier (name ou isActive).",
+  });
 export type UpdateDiningTableBody = z.infer<typeof updateDiningTableSchema>;
 
 /* -------------------------------------------------------------------------- */
@@ -390,3 +403,59 @@ export const orderHistoryQuerySchema = z.object({
     .default(0),
 });
 export type OrderHistoryQuery = z.infer<typeof orderHistoryQuerySchema>;
+
+/* -------------------------------------------------------------------------- */
+/* Establishment configuration (CFG-01 / CFG-02 / CFG-03)                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * CFG-01. The timezone's *existence* is checked in the service, against the
+ * runtime's own zone data — a hard-coded list here would go stale, and the
+ * shape of the request is all a schema can honestly speak for.
+ *
+ * Rates and thresholds go through `moneyAmountSchema` for its 2-decimal
+ * rule, and therefore arrive in hundredths: 20 % is 2000.
+ */
+export const updateSettingsSchema = z.strictObject({
+  name: shortTextSchema(150, "Le nom de l'établissement"),
+  timezone: shortTextSchema(64, "Le fuseau horaire"),
+  currency: z
+    .string({ error: "La devise est requise." })
+    .trim()
+    .toUpperCase()
+    .regex(/^[A-Z]{3}$/, { error: "Devise invalide : un code ISO de 3 lettres (ex. EUR)." }),
+  defaultTaxRate: moneyAmountSchema,
+  cashDiscrepancyThreshold: moneyAmountSchema,
+});
+export type UpdateSettingsBody = z.infer<typeof updateSettingsSchema>;
+
+export const createTaxClassSchema = z.strictObject({
+  name: shortTextSchema(100, "Le nom de la classe fiscale"),
+  rate: moneyAmountSchema,
+});
+export type CreateTaxClassBody = z.infer<typeof createTaxClassSchema>;
+
+export const categorySchema = z.strictObject({
+  name: shortTextSchema(100, "Le nom de la catégorie"),
+  taxClassId: idSchema.nullish(),
+});
+export type CategoryBody = z.infer<typeof categorySchema>;
+
+export const updateTableActiveSchema = z.strictObject({
+  isActive: z.boolean({ error: "Statut d'activation invalide." }),
+});
+export type UpdateTableActiveBody = z.infer<typeof updateTableActiveSchema>;
+
+/** CFG-03: the order given is the order stored, so the list must be complete and unambiguous. */
+export const reorderTablesSchema = z
+  .strictObject({
+    orderedIds: z
+      .array(idSchema, { error: "Liste de tables invalide." })
+      .min(1, { error: "Indiquez au moins une table." })
+      .max(500, { error: "Trop de tables." }),
+  })
+  .refine((body) => new Set(body.orderedIds).size === body.orderedIds.length, {
+    error: "La même table apparaît deux fois dans l'ordre demandé.",
+    path: ["orderedIds"],
+  });
+export type ReorderTablesBody = z.infer<typeof reorderTablesSchema>;

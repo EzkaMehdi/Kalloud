@@ -1,10 +1,8 @@
 import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
-import { pool } from "@/lib/db";
 import { apiRoute, jsonOk } from "@/lib/http";
-import { fromCents } from "@/lib/money";
-import { updateProduct } from "@/lib/repositories/products";
+import { editProduct } from "@/lib/services/configuration";
 import { parseIdParam, parseJsonBody } from "@/lib/validation/parse";
 import { updateProductSchema } from "@/lib/validation/schemas";
 
@@ -22,9 +20,7 @@ export const PATCH = apiRoute<RouteParams>(async (request: NextRequest, { params
   // client sent, with any type. The schema now bounds every field and
   // requires at least one of them (API-01).
   const body = await parseJsonBody(request, updateProductSchema);
-  const product = await updateProduct(pool, context.locationId, productId, {
-    ...body,
-    price: body.price === undefined ? undefined : fromCents(body.price),
-  });
+  // CFG-02: through the service, so the change is audited.
+  const product = await editProduct(context, productId, body);
   return jsonOk(product);
 });

@@ -56,10 +56,14 @@ test.describe("ORD-13: a ticket's whole life, in the browser", () => {
     await expect(tableCard).toContainText("EN COURS");
     await tableCard.click();
     const resumed = page.getByRole("dialog");
-    await expect(resumed.locator(".ticket-total")).toContainText("20.00 €");
+    // 20 € of lines less the 5 € discount. This assertion used to expect
+    // 20 € — it encoded the defect it was meant to guard: the ticket showed
+    // the list price while the server was about to charge 15 €.
+    await expect(resumed.locator(".ticket-total")).toContainText("15.00 €");
     await expect(resumed.getByText(/Remise appliquée/)).toBeVisible();
+    await expect(resumed.getByRole("button", { name: /encaisser/i })).toContainText("15.00 €");
 
-    // Pay — 20 € less the 5 € discount.
+    // Pay — the amount the button states.
     await resumed.getByRole("button", { name: /encaisser/i }).click();
     await expect(resumed).toBeHidden();
     // The confirmation reports the server's own total (SALE-06), formatted
@@ -161,5 +165,44 @@ test.describe("ORD-12: the history filters and paginates", () => {
     const pager = page.locator(".history-pager small");
     const empty = page.getByText(/Aucune commande encaissée pour le moment/);
     await expect(pager.or(empty).first()).toBeVisible();
+  });
+});
+
+test.describe("ORD-11: the discount is visible in what will be charged", () => {
+  test("the Encaisser button states the discounted amount, not the list price", async ({
+    page,
+  }) => {
+    await loginAsOwner(page);
+    const product = await createProduct(page.request, "20.00");
+    await openOwnTable(page);
+
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: new RegExp(escapeRegExp(product.name)) }).click();
+    await expect(dialog.locator(".ticket-total")).toContainText("20.00 €");
+
+    await dialog.getByRole("button", { name: /appliquer une remise/i }).click();
+    await dialog.getByRole("radio", { name: /pourcentage/i }).click();
+    await dialog.getByLabel(/remise \(%\)/i).fill("10");
+    await dialog.getByLabel(/motif de la remise/i).fill("Client fidèle");
+    await dialog.getByRole("button", { name: /appliquer la remise/i }).click();
+
+    // The defect this covers: the discount was recorded but the total and
+    // the button still showed 20 €, so the cashier read it as "it did not
+    // work" — while the server was about to charge 18 €. A checkout button
+    // must state what will actually be taken.
+    await expect(dialog.locator(".ticket-total")).toContainText("18.00 €");
+    await expect(dialog.getByRole("button", { name: /encaisser/i })).toContainText("18.00 €");
+    // And the lines still reconcile with it on screen.
+    await expect(dialog).toContainText("Sous-total");
+    await expect(dialog).toContainText("− 2.00 €");
+
+    // A mixed split that adds up to the *discounted* total is accepted —
+    // it was refused inline while the client compared against the gross.
+    await dialog.getByRole("radio", { name: "Mixte" }).click();
+    await dialog.getByLabel(/espèces/i).fill("8");
+    await dialog.getByLabel(/carte/i).fill("10");
+    await dialog.getByRole("button", { name: /encaisser/i }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText(/Vente encaissée \(18\.00 €\)/)).toBeVisible();
   });
 });

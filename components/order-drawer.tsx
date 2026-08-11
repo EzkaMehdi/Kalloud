@@ -240,12 +240,24 @@ export function OrderDrawer({
   }, [productsQuery.state]);
 
   /**
-   * SALE-06: the displayed total is the server's own `total_amount`, not a
-   * client re-computation. While a save is in flight the two can disagree
-   * for a moment — that is the honest state, and the "Enregistrement…"
-   * indicator says so rather than showing a number nothing has confirmed.
+   * SALE-06: both figures come from the server — `total_amount` is the sum
+   * of the ticket's lines, `discount_amount` what the discount takes off it
+   * (ORD-11). Neither is a client re-computation of prices; subtracting one
+   * server figure from another is not the same thing as re-deriving them.
+   *
+   * The gross is what the lines add up to; the net is what will actually be
+   * charged. A ticket's `total_amount` stays gross on purpose — a percentage
+   * discount is resolved against it, so making it net would compound on the
+   * next save — which is exactly why the display has to do this subtraction
+   * rather than read one field.
+   *
+   * Getting this wrong is not cosmetic: the "Encaisser" button would state
+   * an amount different from what the server charges, and the mixed-payment
+   * check below would refuse a split that adds up correctly.
    */
-  const total = Number(ticket.total_amount);
+  const grossTotal = Number(ticket.total_amount);
+  const discountTotal = Number(ticket.discount_amount ?? 0);
+  const total = grossTotal - discountTotal;
 
   function mutate(next: DraftLine[]) {
     if (conflict) return;
@@ -503,6 +515,27 @@ export function OrderDrawer({
               <b>{(Number(item.unit_price) * item.quantity).toFixed(2)} €</b>
             </div>
           ))
+        )}
+        {/* ORD-11: with a discount, showing only the net would leave a total
+            that does not match the lines above it. The sub-total and the
+            deduction are shown so the two reconcile on screen, the same way
+            the receipt lays them out. */}
+        {discountTotal > 0 && (
+          <>
+            <div className="ticket-line">
+              <div>
+                <b>Sous-total</b>
+              </div>
+              <b>{grossTotal.toFixed(2)} €</b>
+            </div>
+            <div className="ticket-line">
+              <div>
+                <b>Remise</b>
+                {ticket.discount_reason && <small>{ticket.discount_reason}</small>}
+              </div>
+              <b>− {discountTotal.toFixed(2)} €</b>
+            </div>
+          </>
         )}
         <div className="ticket-total">
           <span>Total</span>

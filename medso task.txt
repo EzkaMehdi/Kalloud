@@ -1,10 +1,23 @@
 ================================================================================
-KALLOUD — RECAPITULATIF DE SESSION
-Phase 3 : API-01 (schemas de validation) et API-02 (idempotence)
-Date : 6 aout 2026
-Branche : main — 2 commits pousses sur origin/main
+KALLOUD — RECAPITULATIF DES TRAVAUX
+Phase 3 (fin), phases 4A et 4B completes, plus recette manuelle
+Derniere mise a jour : 9 aout 2026
+Branche : main — tout est pousse sur origin/main
 ================================================================================
 
+SOMMAIRE
+
+  PARTIE I   — Phase 3 : API-01 et API-02 .................... sections 1 a 4
+  PARTIE II  — Correctif des migrations ...................... section 5
+  PARTIE III — Phase 4A : tickets persistants ................ section 6
+  PARTIE IV  — Phase 4B : configuration ...................... section 7
+  PARTIE V   — Correctifs issus de la recette ................ section 8
+  PARTIE VI  — Recette manuelle sur l'interface .............. section 9
+  PARTIE VII — Verification et points ouverts ................ sections 10-12
+
+================================================================================
+PARTIE I — PHASE 3 : API-01 ET API-02
+================================================================================
 
 1. POINT DE DEPART
 --------------------------------------------------------------------------------
@@ -203,53 +216,439 @@ J'ai en revanche verifie que le test de fusion des lignes, lui, echoue bien
 sans le correctif.
 
 
-5. RESULTATS DE VERIFICATION
+================================================================================
+PARTIE II — CORRECTIF DES MIGRATIONS
+================================================================================
+
+5. LES MIGRATIONS CASSAIENT SUR UNE BASE CONTENANT DES DONNEES (commit ffafd29)
+--------------------------------------------------------------------------------
+
+LE PROBLEME
+En me remettant a jour apres le travail du collegue sur la phase 3, la
+migration 0006 a refuse de s'appliquer. Elle affirmait dans son propre
+commentaire : « orders has zero rows in every environment this migration has
+run against so far ». C'etait faux — ma base de developpement contenait 3
+commandes et la base de test 1, laissees par une campagne de tests.
+
+Trois echecs distincts, isoles un par un sur une base jetable :
+  ERROR: check constraint "orders_status_check" ... is violated by some row
+  ERROR: column "created_by" of relation "orders" contains null values
+  ERROR: column "order_number" of relation "orders" contains null values
+
+PORTEE REELLE
+La CI et tout clone neuf passaient, puisqu'ils partent d'une base vide. Ce
+qui cassait, c'etait la machine de tout developpeur dont la base etait
+anterieure a ORD-01 — developpement ET test, donc « pnpm test » devenait
+injouable.
+
+POURQUOI LE CORRECTIF EST DANS 0006 ET PAS DANS UNE 0010
+J'avais d'abord propose une migration correctrice ulterieure. C'etait faux :
+le runner applique dans l'ordre des noms et s'arrete au premier echec, donc
+une 0010 n'aurait jamais ete atteinte. Le correctif devait vivre dans 0006.
+C'est sans danger ici parce que le runner n'enregistre aucun checksum : une
+base l'ayant deja appliquee ne la rejoue pas.
+
+CE QUE FAIT 0006 MAINTENANT
+  - convertit les statuts vers leur equivalent DEC-03 (COMPLETED -> PAID,
+    PENDING -> OPEN) ;
+  - remet l'horodatage d'une commande annulee dans cancelled_at, que le
+    renommage de closed_at avait transforme en paid_at (une commande annulee
+    se serait declaree payee) ;
+  - numerote les commandes existantes par ordre chronologique et repositionne
+    le compteur au-dessus.
+
+LE CHOIX SUR created_by
+Le prototype n'enregistrait pas qui encaissait. Plutot que d'attribuer ces
+commandes au proprietaire — ce qui fabriquerait une preuve d'audit a propos
+d'une personne — la colonne devient nullable, avec une contrainte suivant le
+precedent de STK-02 : une propriete intrinseque de la ligne decide, ici
+l'instantane fiscal, qu'un encaissement canonique ecrit toujours. Aucune
+commande creee desormais ne peut etre sans auteur.
+
+Cette relaxation creant une divergence de schema avec les bases ayant deja
+applique l'ancienne 0006, la migration 0010 les reconcilie, sans effet sur
+une base neuve. Les TROIS chemins — base neuve, base reconciliee, base
+heritee avec donnees — ont ete compares par pg_dump : schema strictement
+identique.
+
+GARDE-FOU
+tests/integration/migrations-legacy-data.test.ts applique les vraies
+migrations, via le vrai runner, sur une base jetable portant des lignes
+d'avant ORD-01, et verifie la conversion plutot que la simple absence
+d'erreur. Verifie : il echoue bien avec l'ancienne 0006.
+
+REGRESSION TROUVEE ENSUITE (commit 71e2324)
+listOrders ne filtrait pas le statut. Sans consequence tant qu'aucune
+commande ne pouvait etre ouverte, mais la page Bilan lit cette liste sous
+l'intitule « Aucune commande encaissee » : un ticket en cours de saisie y
+apparaissait avec son total provisoire. Les agregats monetaires, eux,
+etaient corrects — ils filtrent tous sur PAID.
+
+
+================================================================================
+PARTIE III — PHASE 4A : TICKETS PERSISTANTS ET PARCOURS DE SALLE
+================================================================================
+
+6. ORD-02 A ORD-14 (commits 3150445, 4519597, 7f93465, 25db977)
+--------------------------------------------------------------------------------
+
+POINT DE DEPART
+Un ticket n'existait que dans la memoire du navigateur : fermer le tiroir ou
+rafraichir la page perdait la commande. Le plan de salle tenait sa propre
+verite dans dining_tables.status, ecrite en optimiste par le client avant
+meme qu'une commande existe — sans rollback, donc une commande abandonnee
+laissait la table occupee pour toujours.
+
+ORD-02 — SERVICES DE TICKET OUVERT
+Une commande OPEN devient une entite reelle : creation, lecture, reprise
+(lib/repositories/tickets.ts, lib/services/tickets.ts, routes sous
+app/api/tickets/). L'unicite « au plus un ticket ouvert par table » est un
+index partiel en base, pas une regle applicative : deux appareils qui ouvrent
+la meme table convergent sur un seul ticket.
+
+ORD-03 — PLAN DE SALLE DERIVE
+La colonne dining_tables.status est SUPPRIMEE. L'occupation se calcule depuis
+le ticket ouvert, donc « aucune table occupee sans ticket » devient vrai par
+construction. Encaisser ne libere plus la table par une seconde ecriture
+qu'on pourrait oublier : la commande cesse simplement d'etre OPEN.
+
+ORD-04 — OUVRIR OU REPRENDRE DEPUIS LA SALLE
+Le tiroir s'ouvre sur un ticket qui existe deja cote serveur, sans etat local
+qu'un rechargement emporterait. L'encaissement nomme la commande et le
+serveur facture ses lignes persistees.
+
+ORD-05 — SAUVEGARDE ET CONFLITS
+Verrou optimiste via orders.version. Une version perimee recoit un 409 et le
+tiroir propose « Recharger le ticket » au lieu de laisser une liste obsolete
+devenir la verite. Les enregistrements sont serialises cote client : trois
+« + » rapides ne doivent pas produire deux conflits que l'utilisateur n'a
+jamais eus.
+
+ORD-06 — ANNULER UN TICKET OUVERT
+Motif exige a trois niveaux : le schema le refuse vide, la base aussi
+(migration 0012), et l'audit l'enregistre avec son auteur. Rien n'est
+supprime : le ticket garde ses lignes et rejoint l'historique en CANCELLED.
+Aucun stock n'est rendu — un ticket ouvert n'en a jamais pris.
+
+ORD-07 — UNIFIER LA VENTE DIRECTE
+Le corps d'un encaissement ne porte plus que orderId. La branche « creer une
+commande payee directement » est supprimee : c'etait le seul chemin par
+lequel une commande pouvait atteindre PAID sans avoir jamais ete OPEN. Une
+vente au comptoir est un ticket sans table, et GET /api/tickets la rend
+joignable — sans quoi elle devenait invisible des la fermeture du tiroir.
+
+ORD-08 — AUTEUR ET NOTES
+L'auteur est resolu en NOM et non en identifiant : « le gerant peut
+identifier l'auteur » n'est pas satisfait par un entier qui l'oblige a ouvrir
+la base. La note de commande se sauvegarde avec les lignes et contre la meme
+version.
+
+ORD-09 — NUMERO ET JUSTIFICATIF
+GET /api/orders/:id/receipt, ouvert depuis l'historique du Bilan. Le taux de
+TVA est fige PAR LIGNE a l'encaissement (migration 0013) : DEC-05 exige une
+ventilation par taux, et l'agregat unique porte par la commande ne se
+decompose pas apres coup. Un justificatif qui recalculerait depuis le
+catalogue imprimerait une autre ventilation le jour ou un taux change — pour
+une vente d'il y a six mois.
+
+ORD-10 — REMBOURSEMENT
+Un remboursement n'ajoute que des lignes. Chaque REFUND est rattache au
+CHARGE qu'il inverse, et les charges d'origine ne sont jamais touchees.
+Total ou partiel selon DEC-03 : seul un remboursement couvrant tout le solde
+fait passer la commande en REFUNDED.
+
+  CONSEQUENCE STRUCTURANTE : le CA net et les especes attendues se calculent
+  desormais depuis le REGISTRE DES PAIEMENTS et non depuis
+  orders.total_amount, qui conserve par construction le montant d'origine.
+  Sans ce changement, un remboursement n'aurait eu AUCUN effet sur les
+  chiffres — ce que DEC-09 interdit explicitement.
+
+  LIMITE ASSUMEE : le stock n'est rendu que sur un remboursement TOTAL. Un
+  remboursement partiel est un montant, pas une liste d'articles ; rien ne
+  dit quels produits sont revenus, et inscrire une supposition au ledger
+  corromprait le seul chiffre que l'ecran de stock existe pour enoncer.
+
+ORD-11 — REMISES ENCADREES
+Montant fixe ou pourcentage, motif obligatoire. Le montant est FIGE a
+l'application (un pourcentage recalcule plus tard imprimerait un autre
+chiffre sur un justificatif deja emis) mais RE-RESOLU si les lignes changent
+(sinon un « 10 % » pose sur 20 EUR resterait bloque a 2 EUR sur un ticket
+monte a 50 EUR).
+
+  DEC-05 applique la remise AVANT la taxe. Sur une commande a plusieurs taux,
+  elle doit donc etre repartie sur les lignes avant que chacune puisse etre
+  taxee — sinon la ventilation par taux du justificatif decrirait des
+  montants que personne n'a payes. La repartition utilise la methode du plus
+  fort reste (lib/money-allocation.ts) : trois arrondis independants de
+  33,33 % donnent 99 ou 102 centimes, et les deux chiffres finissent sur le
+  meme justificatif.
+
+ORD-12 — HISTORIQUE FILTRABLE
+Filtrable par statut et par periode, pagine, et renvoyant le total : un
+paginateur incapable de dire combien de lignes existent ne peut proposer que
+« suivant », jamais « 3 sur 12 ». Le tri porte sur le moment ou la commande a
+atteint son etat final, pas sur son ouverture — un ticket ouvert avant minuit
+et paye apres appartient au jour ou il a ete paye.
+
+ORD-13 / ORD-14 — TESTS
+Le cycle complet est parcouru dans un vrai navigateur : ouverture,
+remplissage, remise, RECHARGEMENT COMPLET, paiement, remboursement. La
+reconciliation d'ORD-14 est testee explicitement : les bandes de TVA du
+justificatif somment exactement la taxe persistee, chaque bande verifie
+HT + TVA = TTC.
+
+GATE-4A : les quatre criteres sont coches, chacun reference a la tache qui
+le porte.
+
+EFFET DE BORD ASSUME
+Le retrait du chemin de vente directe a touche huit suites de tests qui
+l'utilisaient comme raccourci pour « une vente a eu lieu ». Elles passent
+desormais par un helper partage (tests/integration/helpers/sales.ts). Aucune
+assertion metier n'a ete affaiblie.
+
+Les specs E2E de vente partageaient « Table 1 ». Inoffensif tant qu'un tiroir
+etait un panier local, mais son ticket est desormais persistant et partage :
+en parallele, deux specs s'ecrasaient. Chacune cree maintenant sa propre
+table, comme elle creait deja son propre produit.
+
+
+================================================================================
+PARTIE IV — PHASE 4B : CONFIGURATION DE L'ETABLISSEMENT
+================================================================================
+
+7. CFG-01 A CFG-04 (commit 5392683)
+--------------------------------------------------------------------------------
+
+CFG-01 — PARAMETRES DE L'ETABLISSEMENT
+Un ecran /configuration et GET/PUT /api/settings pour le nom, le fuseau, la
+devise, le taux de TVA par defaut et le seuil d'ecart de caisse. Reserve au
+proprietaire (settings:manage) : un responsable administre l'etablissement,
+le proprietaire le definit. Nom et reglages vivant dans deux tables,
+l'ecriture est une seule transaction.
+
+  LE POINT DE FOND : le fuseau est desormais REELLEMENT applique. Les bornes
+  de periode du tableau de bord se calculaient avec new Date(year, month - 1,
+  1), c'est-a-dire minuit LA OU SE TROUVE LE SERVEUR. Sur un hote UTC servant
+  un etablissement parisien, chaque mois commencait deux heures trop tard et
+  deplacait silencieusement une vente de fin de soiree dans les chiffres du
+  mois suivant. lib/time.ts calcule l'instant correspondant a une heure
+  locale dans un fuseau donne, avec une seconde passe pour l'heure qui
+  entoure un changement d'heure.
+
+CFG-02 — CATEGORIES ET PRODUITS
+Categories creables et renommables avec leur classe fiscale ; produits
+enrichis d'une classe fiscale, d'une unite et d'une categorie modifiable. Les
+trois colonnes nullables portent un drapeau « fourni ou non » plutot que de
+confondre null avec « absent » : vider une categorie est une intention
+reelle. Toutes les mutations sont auditees. La desactivation remplace la
+suppression — les lignes de commande passees pointent toujours sur la ligne
+produit, donc un justificatif imprime un an plus tard nomme encore ce qui a
+ete vendu.
+
+CFG-03 — PLAN DE SALLE
+Creation, renommage, ordre d'affichage et desactivation. Le refus de
+desactiver une table portant un ticket ouvert vit dans la clause WHERE de
+l'UPDATE, pas dans une lecture prealable : un ticket ouvert entre-temps
+depuis un autre appareil ne peut pas se glisser dans l'intervalle.
+
+CFG-04 — TESTS
+La barriere de permission est verifiee des deux cotes : l'ecran rend le
+formulaire inerte pour un responsable ET lui dit pourquoi, et le serveur
+renvoie 403 sur la meme requete envoyee directement. Un ecran qui se
+contenterait de masquer un bouton ne serait pas une autorisation.
+
+GATE-4B : les quatre criteres sont coches.
+
+
+================================================================================
+PARTIE V — CORRECTIFS ISSUS DE LA RECETTE
+================================================================================
+
+8. DEUX DEFAUTS TROUVES EN TESTANT L'INTERFACE
+--------------------------------------------------------------------------------
+
+[1] ROLE MIS EN CACHE ENTRE ONGLETS (commit a197b12)
+
+  SYMPTOME SIGNALE : « sur la session caissier il y a l'option appliquer une
+  remise, mais sur la session owner je ne l'ai pas du tout ».
+
+  DIAGNOSTIC : les permissions etaient correctes des deux cotes — verifie, le
+  serveur renvoie bien 403 « Le role CASHIER ne peut pas effectuer l'action
+  orders:discount ». Mais une session est UN SEUL COOKIE pour tout le
+  navigateur. Se connecter avec un autre compte dans un second onglet change
+  silencieusement l'identite du premier — qui ne lisait la session qu'a son
+  montage et continuait d'afficher les controles du role precedent. Les deux
+  onglets avaient donc leurs roles inverses par rapport a ce qui etait
+  attendu.
+
+  C'est precisement ce que le code du projet dit vouloir eviter
+  (navigation.tsx : « l'interface ne devrait pas proposer des actions que le
+  serveur refusera »).
+
+  CORRECTIF : le role est relu quand l'onglet redevient visible. C'est le bon
+  moment : celui ou l'utilisateur y revient, donc le dernier instant avant
+  qu'il agisse sur ce qu'il voit.
+
+  A SAVOIR : pour tester deux roles en parallele, il faut deux PROFILS de
+  navigateur ou une fenetre privee — pas deux onglets.
+
+[2] LA REMISE N'ETAIT PAS VISIBLE DANS LE MONTANT ENCAISSE (commit adce5df)
+
+  SYMPTOME SIGNALE : « la remise ne s'effectue pas ».
+
+  DIAGNOSTIC : elle s'effectuait — mais rien ne le montrait. Le ticket et le
+  bouton continuaient d'afficher 20,00 EUR pendant que le serveur s'appretait
+  a prelever 18,00 EUR.
+
+  Ce n'etait pas cosmetique. Un bouton « Encaisser » doit annoncer ce qui
+  sera pris, sinon le caissier annonce un prix au client et le systeme en
+  encaisse un autre. Et la verification du paiement mixte comparait la somme
+  du split au montant BRUT : un split correct sur un ticket remise etait
+  refuse avant meme d'etre envoye.
+
+  CORRECTIF : orders.total_amount reste volontairement le brut sur un ticket
+  ouvert — une remise en pourcentage se resout contre lui, le rendre net la
+  ferait se composer a chaque sauvegarde. C'est donc l'affichage qui
+  soustrait, a partir de deux chiffres qui viennent tous deux du serveur. Le
+  sous-total et la deduction sont affiches, sinon le total ne correspondrait
+  plus aux lignes au-dessus de lui.
+
+  A NOTER : le test E2E d'ORD-13 ENCODAIT le defaut — il verifiait que le
+  total restait a 20 EUR apres une remise de 5 EUR. Le correctif l'a fait
+  tomber, ce qui etait le bon signe. Il verifie desormais 15 EUR, bouton
+  compris.
+
+
+================================================================================
+PARTIE VI — RECETTE MANUELLE SUR L'INTERFACE
+================================================================================
+
+9. LES 7 ETAPES JOUEES DANS LE NAVIGATEUR — TOUTES VALIDEES
+--------------------------------------------------------------------------------
+
+Environnement : http://localhost:3000, base remise a zero avant la campagne
+(9 produits de demo, 7 tables, 0 commande, 1 journee de caisse ouverte).
+Comptes : owner@ / manager@ / cashier@kalloud.test, mot de passe Kalloud123!
+
+  ETAPE 1 — LE TICKET SURVIT AU RECHARGEMENT ......................... OK
+    Ouvrir Table 1, ajouter 2-3 articles, faire Cmd+R.
+    Attendu : la table affiche EN COURS et le montant ; les articles sont
+    toujours la en rouvrant. Avant la phase 4A, tout etait perdu.
+
+  ETAPE 2 — LA TABLE SE LIBERE TOUTE SEULE ........................... OK
+    Fermer le tiroir sans payer : la table reste EN COURS.
+    Rouvrir et encaisser : elle repasse LIBRE immediatement, sans action.
+
+  ETAPE 3 — REMISE ET JUSTIFICATIF ................................... OK
+    Appliquer une remise de 10 %, motif obligatoire.
+    Attendu : le ticket affiche Sous-total / Remise / Total, et le bouton
+    « Encaisser » annonce le montant remise.
+    Encaisser en Mixte : si la somme des deux montants n'egale pas le total,
+    refus AVANT envoi.
+    Le justificatif montre la ventilation TVA par taux, la ligne Remise et
+    « Servi par ».
+    (C'est cette etape qui a revele le defaut [2] ci-dessus.)
+
+  ETAPE 4 — REMBOURSEMENT ............................................ OK
+    Rembourser depuis le justificatif, motif obligatoire.
+    Attendu : le CA baisse, la commande passe Remboursee SANS etre supprimee,
+    le stock revient, et elle apparait sous l'onglet Remboursees.
+
+  ETAPE 5 — ANNULATION ET VENTE DIRECTE .............................. OK
+    Annuler un ticket avec motif : la table repasse LIBRE.
+    Ouvrir une vente directe, ajouter un article, fermer sans payer : une
+    section « Ventes directes en cours » apparait et le ticket est repris
+    d'un clic. Avant ORD-07, il devenait introuvable.
+
+  ETAPE 6 — CONFIGURATION ............................................ OK
+    Changer le nom de l'etablissement, recharger : il tient.
+    Saisir un fuseau invalide (Mars/Olympus_Mons) : refus explique.
+    Desactiver une table : elle disparait du plan de salle.
+    Tenter de desactiver une table portant un ticket ouvert : refus explique.
+
+  ETAPE 7 — LES ROLES ................................................ OK
+    En manager : le formulaire de l'etablissement est grise avec « seul le
+    proprietaire peut les modifier », mais la creation de table et de
+    categorie reste possible.
+    En cashier : pas de lien Bilan, pas de bouton remise sur un ticket.
+
+REMARQUE
+Les etapes 1, 2, 5, 6 et 7 sont passees du premier coup. Les etapes 3 et 4
+ont revele les deux defauts de la partie V, corriges puis rejoues avec
+succes.
+
+
+================================================================================
+PARTIE VII — VERIFICATION ET POINTS OUVERTS
+================================================================================
+
+10. RESULTATS DE VERIFICATION (etat final)
 --------------------------------------------------------------------------------
 
   lint (eslint) ............................ OK
   format (prettier) ........................ OK
   typecheck (tsc) .......................... OK
-  tests unitaires + integration ............ 151 tests, 11 fichiers — OK
-  tests end-to-end (playwright) ............ 12 tests — OK
+  tests unitaires + integration ............ 371 tests, 26 fichiers — OK
+  tests end-to-end (playwright) ............ 43 tests — OK
   build (next build) ....................... OK
   audit de securite (niveau high) .......... aucune vulnerabilite
+  recette manuelle ......................... 7 etapes sur 7 — OK
 
   Reproductibilite sur base neuve verifiee :
-      db:reset -> 5 migrations appliquees -> seed -> 151 tests verts
+      db:reset -> 15 migrations appliquees -> seed -> suite verte
+
+  Progression des tests au fil de la mission :
+      fin API-02 ......... 151 unitaires+integration /  12 E2E
+      fin phase 4A ....... 336 unitaires+integration /  37 E2E
+      fin phase 4B ....... 371 unitaires+integration /  43 E2E
 
 
-6. DEUX POINTS QUI RESTENT DE TON COTE
+11. CE QUI RESTE OUVERT
 --------------------------------------------------------------------------------
 
-  [A] TOKEN GITHUB EN CLAIR — a traiter en priorite
-      Ton remote git contient un jeton d'acces personnel en clair dans l'URL :
-          https://ghp_xxxxxxxx@github.com/EzkaMehdi/Kalloud.git
-      Il est stocke en clair dans .git/config et apparait dans les logs.
-      A faire :
+  [A] TOKEN GITHUB EN CLAIR — toujours a traiter, priorite haute
+      Le remote contient un jeton d'acces personnel en clair dans .git/config
+      et il a servi a chaque push de cette mission.
         1. le revoquer sur github.com/settings/tokens
-        2. repointer le remote, par exemple en SSH :
+        2. repointer le remote :
              git remote set-url origin git@github.com:EzkaMehdi/Kalloud.git
-           ou en utilisant le gestionnaire d'identifiants de macOS.
 
-  [B] LE SCRIPT « pnpm setup » EST MASQUE
-      « setup » est aussi une commande integree de pnpm (elle configure le
-      shell). Lancer « pnpm setup » affiche des instructions PNPM_HOME au lieu
-      d'initialiser la base. Seul « pnpm run setup » fonctionne.
-      Le renommer (par exemple en « db:setup » ou « bootstrap ») eviterait le
-      piege. Une tache est proposee pour ca.
+  [B] CLOTURER UN SERVICE AVEC DES TICKETS OUVERTS
+      Non gere : ils restent ouverts sur une journee fermee. DEC-04 prevoit
+      une regle, aucune tache de la phase 4A ne la portait. C'est CASH-02.
+
+  [C] ERREUR D'HYDRATATION
+      Visible dans les logs E2E, anterieure a cette mission, sans effet sur
+      les tests. Relevee par OPS-07.
+
+  [D] DEVISE PARTIELLEMENT APPLIQUEE
+      L'ecran de configuration et le justificatif suivent la devise
+      configuree ; la caisse affiche encore « EUR » en dur. Dette visible,
+      pas un mensonge : changer la devise change bien ce que la base stocke.
+
+  [E] LE SCRIPT « pnpm setup » EST MASQUE
+      « setup » est aussi une commande integree de pnpm. Seul
+      « pnpm run setup » fonctionne.
+
+  [F] LA TABLE orders DEVIENT LARGE
+      Ticket ouvert, vente, annulation, remboursement et remise cohabitent
+      avec beaucoup de colonnes nullables tenues par des contraintes
+      croisees. Ca tient, mais ca merite une relecture avant d'y ajouter
+      encore.
 
 
-7. LA SUITE DU BACKLOG
+12. LA SUITE DU BACKLOG
 --------------------------------------------------------------------------------
 
-Les taches API-01 et API-02 sont cochees dans tasks.md. La sequence prevue
+Phases 0 a 4B terminees, GATE-4A et GATE-4B closes. La sequence prevue
 enchaine avec :
 
-  ORD-01    cycle de vie canonique des commandes (OPEN/PAID/CANCELLED/REFUNDED)
-  CASH-01   fiabiliser le modele de journee de caisse
-  STK-01..03  ledger de mouvements de stock et service transactionnel
-  SALE-01..10 catalogue reel, modele de paiements, encaissement canonique
-              (c'est SALE-03 qui corrige definitivement l'anomalie P0-02, et
-               SALE-05 qui ramene le paiement mixte)
+  Phase 5A  CASH-02 a CASH-08  caisse reconciliable (dont la cloture d'un
+                               service avec tickets ouverts, point [B])
+  Phase 5B  STK-04 a STK-08    stock exploitable
+  Phase 6   BI-01 a BI-06      cockpit et exports (dont BI-03, la question
+                               « jour calendaire ou service » laissee
+                               ouverte par CFG-01)
+  Phase 7   OPS-02 a OPS-08    mise en production
 
 ================================================================================

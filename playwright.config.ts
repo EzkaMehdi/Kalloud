@@ -22,6 +22,10 @@ const baseURL = `http://127.0.0.1:${PORT}`;
  */
 export default defineConfig({
   testDir: "./tests/e2e",
+  // Each spec creates isolated tables and products on purpose (see
+  // helpers/floor.ts); nothing used to remove them, so local databases grew
+  // dozens of "Test table …" rows per run. CI reseeds and never saw it.
+  globalTeardown: "./tests/e2e/global-teardown.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

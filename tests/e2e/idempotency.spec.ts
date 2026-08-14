@@ -114,8 +114,12 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
   }) => {
     await loginAsOwner(request);
 
-    const products: ProductRow[] = await (await request.get("/api/products")).json();
-    const sellable = products.find((product) => product.is_active && product.stock_quantity > 2)!;
+    // Its own product rather than the first sellable seeded one, like the
+    // rest of this file: a sale on a seeded product leaves a counter ticket
+    // that no cleanup can tell apart from a real one (tests/e2e/global-
+    // teardown.ts matches on the test naming convention), so every run used
+    // to add permanent clutter to a developer's caisse.
+    const sellable = await createIsolatedProduct(request);
 
     const key = crypto.randomUUID();
     const orderId = await openTicketWith(request, [{ productId: sellable.id, quantity: 1 }]);
@@ -140,8 +144,8 @@ test.describe.serial("API-02: idempotent checkout over HTTP", () => {
   test("the same key with a different payload is refused", async ({ request }) => {
     await loginAsOwner(request);
 
-    const products: ProductRow[] = await (await request.get("/api/products")).json();
-    const sellable = products.find((product) => product.is_active && product.stock_quantity > 3)!;
+    // Own product, same reason as above.
+    const sellable = await createIsolatedProduct(request);
     const key = crypto.randomUUID();
 
     const firstTicket = await openTicketWith(request, [{ productId: sellable.id, quantity: 1 }]);

@@ -5,7 +5,7 @@ import {
   getRevenueBetween,
   openBusinessDay,
 } from "../../lib/repositories/business-days";
-import { getCashBalance } from "../../lib/repositories/cash-movements";
+import { getExpectedCash } from "../../lib/repositories/cash-movements";
 import { listOrders, nextOrderNumber } from "../../lib/repositories/orders";
 import { createProduct } from "../../lib/repositories/products";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
@@ -190,7 +190,7 @@ describe("ORD-01: canonical order lifecycle", () => {
     // cash_amount — it does not read business_days.opening_cash (that
     // formula is CASH-01's job, see the doc comment on getCashBalance).
     // No cash_movements exist here, so the balance is exactly the sale.
-    const balance = await getCashBalance(pool, tenant.locationId, businessDay.id);
+    const balance = (await getExpectedCash(pool, tenant.locationId, businessDay.id)).expected;
     expect(balance).toBe("5.00");
 
     const now = new Date();

@@ -1,4 +1,5 @@
 import type { Queryable } from "../db";
+import { NotFoundError } from "../errors";
 import type { CashMovementCategory } from "../validation/primitives";
 
 export type CashMovementType = "OPENING" | "IN" | "OUT";
@@ -77,37 +78,89 @@ export async function listCashMovements(
 }
 
 /**
- * TODO(CASH-04, phase 5A): this reproduces the prototype's formula
- * (opening/in/out +/- cash sales), which does not net out refunds or
- * end-of-service withdrawals correctly. The DEC-04/DEC-05-correct formula
- * ("fond initial + ventes espèces nettes + entrées - sorties") lands with
- * the cash reconciliation rewrite once payments/refunds exist as their own
- * ledger (SALE-02).
+ * CASH-04: the expected cash in the drawer, and the terms it is made of.
+ *
+ *     fond initial + ventes espèces nettes + entrées − sorties
+ *
+ * This is the single definition. Before it, three places answered the
+ * question differently: `/api/cash-summary` summed the movement ledger,
+ * while the closing computed `opening_cash + cash_revenue` and ignored cash
+ * movements entirely — a day opened at 150 €, selling 100 € in cash, with a
+ * 200 € end-of-service withdrawal, closed at 250 € while the drawer held
+ * 50 €. Every caller now shares this function, so they cannot drift again.
+ *
+ * Two double-counting traps are closed structurally rather than by
+ * convention:
+ *
+ * - The opening float exists twice in the schema — as
+ *   `business_days.opening_cash` and as the `OPENING` movement written
+ *   beside it (CASH-01). It is read once, from the day, and `OPENING` is
+ *   excluded from the movement sums. A legacy day whose float predates the
+ *   movement ledger is therefore still counted correctly.
+ * - A withdrawal is a single `OUT` row, subtracted once. The
+ *   end-of-service withdrawal (DEC-11) is deliberately *not* special-cased
+ *   here: it leaves the drawer exactly like any other outflow, and treating
+ *   it apart is what would create the double count `CASH-04` forbids. Its
+ *   category exists so the closing screen can *show* it (CASH-05), not so
+ *   the arithmetic can bend around it.
+ *
+ * The breakdown is returned, not just the total: DEC-04 requires the
+ * closing screen to show the detail of the calculation above the counted
+ * amount, and a total alone cannot be explained to a cashier who disagrees
+ * with it.
  */
-export async function getCashBalance(
+export interface ExpectedCash {
+  /** `business_days.opening_cash` — the float stated when the service was opened. */
+  opening_cash: string;
+  /** Cash charges minus cash refunds (ORD-10/DEC-09). */
+  cash_sales: string;
+  /** `IN` movements only; the opening float is not one of them. */
+  cash_in: string;
+  /** `OUT` movements, withdrawals included, each counted once. */
+  cash_out: string;
+  expected: string;
+}
+
+export async function getExpectedCash(
   db: Queryable,
   locationId: number,
   businessDayId: number,
-): Promise<string> {
-  const { rows } = await db.query<{ balance: string }>(
-    `SELECT (
-       COALESCE(
-         (SELECT SUM(CASE WHEN type IN ('OPENING', 'IN') THEN amount ELSE -amount END)
-          FROM cash_movements WHERE location_id = $1 AND business_day_id = $2),
-         0
-       ) + COALESCE(
-         -- ORD-10/DEC-09: "les ventes nettes intègrent les remboursements
-         -- espèces". Read from the payments ledger, because a refunded
-         -- order keeps its original cash_amount — the money handed back is
-         -- a REFUND line, not a rewrite of what was taken.
-         (SELECT SUM(CASE WHEN p.type = 'CHARGE' THEN p.amount ELSE -p.amount END)
-          FROM payments p
-          JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
-          WHERE p.method = 'CASH' AND o.location_id = $1 AND o.business_day_id = $2),
-         0
-       )
-     )::DECIMAL(10, 2) AS balance`,
+): Promise<ExpectedCash> {
+  const { rows } = await db.query<ExpectedCash>(
+    `WITH movements AS (
+       SELECT
+         COALESCE(SUM(amount) FILTER (WHERE type = 'IN'), 0)  AS cash_in,
+         COALESCE(SUM(amount) FILTER (WHERE type = 'OUT'), 0) AS cash_out
+       FROM cash_movements
+       WHERE location_id = $1 AND business_day_id = $2
+     ),
+     sales AS (
+       -- ORD-10/DEC-09: "les ventes nettes intègrent les remboursements
+       -- espèces". Read from the payments ledger, because a refunded order
+       -- keeps its original amount for the whole life of the sale — the
+       -- money handed back is a REFUND line, not a rewrite of what was
+       -- taken.
+       SELECT COALESCE(
+                SUM(CASE WHEN p.type = 'CHARGE' THEN p.amount ELSE -p.amount END), 0
+              ) AS cash_sales
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
+       WHERE p.method = 'CASH' AND o.location_id = $1 AND o.business_day_id = $2
+     ),
+     day AS (
+       SELECT opening_cash FROM business_days WHERE id = $2 AND location_id = $1
+     )
+     SELECT
+       day.opening_cash::DECIMAL(10, 2)                       AS opening_cash,
+       sales.cash_sales::DECIMAL(10, 2)                       AS cash_sales,
+       movements.cash_in::DECIMAL(10, 2)                      AS cash_in,
+       movements.cash_out::DECIMAL(10, 2)                     AS cash_out,
+       (day.opening_cash + sales.cash_sales + movements.cash_in - movements.cash_out)
+         ::DECIMAL(10, 2)                                     AS expected
+     FROM day, sales, movements`,
     [locationId, businessDayId],
   );
-  return rows[0].balance;
+  const row = rows[0];
+  if (!row) throw new NotFoundError("Journée de caisse introuvable.");
+  return row;
 }

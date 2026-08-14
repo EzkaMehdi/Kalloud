@@ -1,4 +1,5 @@
 import { pool } from "../db";
+import { getExpectedCash } from "../repositories/cash-movements";
 import { getLocationSettings } from "../repositories/settings";
 import { zonedTime, zonedToday } from "../time";
 import {
@@ -21,6 +22,15 @@ export interface DashboardSummary {
   card_revenue: string;
   orders_count: number;
   average_basket: string;
+  /**
+   * CASH-04: expected cash in the drawer, from the one shared formula.
+   *
+   * `null` outside `period=day`, and that is the honest answer rather than a
+   * missing field: expected cash is a property of a cash session (DEC-04),
+   * not of a calendar month. Summing drawers across a month would produce a
+   * number that looks meaningful and reconciles against nothing.
+   */
+  expected_cash: string | null;
 }
 
 const EMPTY_SUMMARY: DashboardSummary = {
@@ -29,6 +39,7 @@ const EMPTY_SUMMARY: DashboardSummary = {
   card_revenue: "0.00",
   orders_count: 0,
   average_basket: "0.00",
+  expected_cash: null,
 };
 
 /**
@@ -54,7 +65,11 @@ export async function getDashboardSummary(
   if (query.period === "day") {
     const activeDay = await getActiveBusinessDay(pool, locationId);
     if (activeDay) {
-      return getBusinessDaySummary(pool, locationId, activeDay.id);
+      const [summary, expectedCash] = await Promise.all([
+        getBusinessDaySummary(pool, locationId, activeDay.id),
+        getExpectedCash(pool, locationId, activeDay.id),
+      ]);
+      return { ...summary, expected_cash: expectedCash.expected };
     }
     return EMPTY_SUMMARY;
   }
@@ -74,5 +89,5 @@ export async function getDashboardSummary(
         ? zonedTime(timeZone, year + 1, 1, 1)
         : zonedTime(timeZone, year, month + 1, 1);
 
-  return getRevenueBetween(pool, locationId, from, to);
+  return { ...(await getRevenueBetween(pool, locationId, from, to)), expected_cash: null };
 }

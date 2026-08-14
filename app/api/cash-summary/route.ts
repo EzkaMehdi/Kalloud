@@ -2,7 +2,7 @@ import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
 import { apiRoute, jsonOk } from "@/lib/http";
 import { getActiveBusinessDay } from "@/lib/repositories/business-days";
-import { getCashBalance } from "@/lib/repositories/cash-movements";
+import { getExpectedCash } from "@/lib/repositories/cash-movements";
 
 export const GET = apiRoute(async () => {
   const context = await requireRequestContext();
@@ -10,11 +10,16 @@ export const GET = apiRoute(async () => {
   if (!day) {
     // CASH-01: "0.00" alone read exactly like a real, open register at a
     // zero balance — indistinguishable from an establishment that simply
-    // never opened a day. `businessDayOpen` is additive (existing callers
-    // reading only `balance` are unaffected) so the true state is at least
-    // available; wiring the caisse screen to act on it is CASH-02/CASH-07.
+    // never opened a day. `businessDayOpen` tells the two apart; CASH-02
+    // is what made the caisse screen act on it.
     return jsonOk({ balance: "0.00", businessDayOpen: false });
   }
-  const balance = await getCashBalance(pool, context.locationId, day.id);
-  return jsonOk({ balance, businessDayOpen: true });
+
+  // CASH-04: the same function the closing uses, so the figure a cashier
+  // watches all service cannot disagree with the one they are asked to
+  // reconcile against. `balance` is kept as the total's name for existing
+  // callers; `expectedCash` carries the terms behind it, which DEC-04
+  // requires the closing screen to show (CASH-05).
+  const expectedCash = await getExpectedCash(pool, context.locationId, day.id);
+  return jsonOk({ balance: expectedCash.expected, businessDayOpen: true, expectedCash });
 });

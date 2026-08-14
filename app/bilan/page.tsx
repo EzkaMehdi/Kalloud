@@ -14,6 +14,8 @@ interface DashboardStats {
   card_revenue: string;
   orders_count: number;
   average_basket: string;
+  /** CASH-04: null outside the open service — see lib/services/dashboard.ts. */
+  expected_cash: string | null;
 }
 
 interface OrderRow {
@@ -188,6 +190,18 @@ export default function Bilan() {
                 </span>
               </div>
             </div>
+            {/* CASH-04: the same figure the caisse card and the closing use.
+                Only shown for the open service — expected cash is a property
+                of a session (DEC-04), so the API returns null over a month
+                or a year rather than a total that reconciles against
+                nothing. */}
+            {stats.expected_cash !== null && (
+              <div className="kpi">
+                <span className="kpi-label">Espèces attendues</span>
+                <strong>{eur(stats.expected_cash)}</strong>
+                <div className="split">Fond + espèces + entrées − sorties</div>
+              </div>
+            )}
             <div className="kpi">
               <span className="kpi-label">Commandes</span>
               <strong>{stats.orders_count}</strong>

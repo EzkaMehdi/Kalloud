@@ -8,7 +8,7 @@ import {
   getBusinessDaySummary,
   openBusinessDay,
 } from "../../lib/repositories/business-days";
-import { getCashBalance } from "../../lib/repositories/cash-movements";
+import { getExpectedCash } from "../../lib/repositories/cash-movements";
 import { listAuditEvents } from "../../lib/audit";
 import { listOrders } from "../../lib/repositories/orders";
 import { createProduct, listProducts, type ProductRow } from "../../lib/repositories/products";
@@ -440,7 +440,7 @@ describe("ORD-02: an open ticket is not sales history", () => {
 
   it("leaves every money figure untouched while a ticket is only open", async () => {
     const day = await getActiveBusinessDay(pool, tenant.locationId);
-    const cashBefore = await getCashBalance(pool, tenant.locationId, day!.id);
+    const cashBefore = (await getExpectedCash(pool, tenant.locationId, day!.id)).expected;
 
     const { ticket } = await openOrResumeTableTicket(context, tableId);
     await saveTicketItems(context, ticket.id, {
@@ -453,7 +453,7 @@ describe("ORD-02: an open ticket is not sales history", () => {
     const summary = await getBusinessDaySummary(pool, tenant.locationId, day!.id);
     expect(summary.revenue).toBe("0.00");
     expect(summary.orders_count).toBe(0);
-    expect(await getCashBalance(pool, tenant.locationId, day!.id)).toBe(cashBefore);
+    expect((await getExpectedCash(pool, tenant.locationId, day!.id)).expected).toBe(cashBefore);
 
     // And it does move once the ticket is paid in cash.
     await performCheckout(

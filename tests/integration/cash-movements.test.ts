@@ -4,12 +4,18 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../lib/db";
 import {
   createCashMovement,
+  getExpectedCash,
   listCashMovements,
   OPENING_FLOAT_CATEGORY,
 } from "../../lib/repositories/cash-movements";
-import { openNewBusinessDay } from "../../lib/services/business-day";
+import { createProduct, type ProductRow } from "../../lib/repositories/products";
+import { closeCurrentBusinessDay, openNewBusinessDay } from "../../lib/services/business-day";
+import { refundOrder } from "../../lib/services/refunds";
+import { parseOrThrow } from "../../lib/validation/parse";
+import { refundOrderSchema } from "../../lib/validation/schemas";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
+import { sell } from "./helpers/sales";
 import type { RequestContext } from "../../lib/context";
 
 /**
@@ -29,6 +35,7 @@ import type { RequestContext } from "../../lib/context";
 
 let tenant: TestTenant;
 let context: RequestContext;
+let coffee: ProductRow;
 
 beforeEach(async () => {
   await resetDatabase(pool);
@@ -43,6 +50,12 @@ beforeEach(async () => {
     role: "OWNER",
     sessionId: 1,
   };
+  coffee = await createProduct(pool, tenant.locationId, {
+    categoryId: null,
+    name: "Café",
+    price: "10.00",
+    stockQuantity: 50,
+  });
 });
 
 describe("CASH-03: cash movements carry a category", () => {
@@ -124,5 +137,132 @@ describe("CASH-03: cash movements carry a category", () => {
 
     expect(source).not.toMatch(/UPDATE\s+cash_movements/i);
     expect(source).not.toMatch(/DELETE\s+FROM\s+cash_movements/i);
+  });
+});
+
+/**
+ * CASH-04: `fond initial + ventes espèces nettes + entrées − sorties`.
+ *
+ * Every figure below is asserted as an exact amount rather than as a
+ * relation between two reads — "tests chiffrés" is the acceptance wording,
+ * and a drawer that reconciles "by the same delta both times" is exactly how
+ * a formula stays wrong without anyone noticing.
+ */
+describe("CASH-04: expected cash is one shared formula", () => {
+  it("adds the four terms, and reports each of them", async () => {
+    const day = await openNewBusinessDay(context, 15_000); // fond 150,00 €
+    await sell(context, [{ productId: coffee.id, quantity: 1 }], { paymentMethod: "CASH" });
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: day.id,
+      type: "IN",
+      category: "FUND_TOPUP",
+      amount: "20.00",
+      reason: "Appoint",
+      createdBy: context.userId,
+    });
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: day.id,
+      type: "OUT",
+      category: "PURCHASE",
+      amount: "5.00",
+      reason: "Consommables",
+      createdBy: context.userId,
+    });
+
+    // 150,00 + 10,00 + 20,00 − 5,00
+    expect(await getExpectedCash(pool, tenant.locationId, day.id)).toEqual({
+      opening_cash: "150.00",
+      cash_sales: "10.00",
+      cash_in: "20.00",
+      cash_out: "5.00",
+      expected: "175.00",
+    });
+  });
+
+  it("takes a cash refund back out, and leaves a card refund alone", async () => {
+    const day = await openNewBusinessDay(context, 10_000); // fond 100,00 €
+    const cashSale = await sell(context, [{ productId: coffee.id, quantity: 2 }], {
+      paymentMethod: "CASH",
+    });
+    const cardSale = await sell(context, [{ productId: coffee.id, quantity: 3 }], {
+      paymentMethod: "CARD",
+    });
+    // The card sale never entered the drawer, so it is absent from the start.
+    expect((await getExpectedCash(pool, tenant.locationId, day.id)).expected).toBe("120.00");
+
+    await refundOrder(
+      context,
+      cashSale.order.id,
+      parseOrThrow(refundOrderSchema, { reason: "Client mécontent" }),
+    );
+    await refundOrder(
+      context,
+      cardSale.order.id,
+      parseOrThrow(refundOrderSchema, { reason: "Erreur de saisie" }),
+    );
+
+    const after = await getExpectedCash(pool, tenant.locationId, day.id);
+    // Only the 20,00 € handed back in cash leaves the drawer; refunding the
+    // card sale changes revenue but not what is in the till.
+    expect(after.cash_sales).toBe("0.00");
+    expect(after.expected).toBe("100.00");
+  });
+
+  it("subtracts an end-of-service withdrawal exactly once", async () => {
+    const day = await openNewBusinessDay(context, 15_000);
+    await sell(context, [{ productId: coffee.id, quantity: 10 }], { paymentMethod: "CASH" });
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: day.id,
+      type: "OUT",
+      category: "END_OF_SERVICE_WITHDRAWAL",
+      amount: "200.00",
+      reason: "Retrait du tiroir",
+      createdBy: context.userId,
+    });
+
+    // 150,00 + 100,00 − 200,00. Two failure modes are excluded by name:
+    // "250.00" is the figure the closing used to produce by ignoring the
+    // movement ledger entirely, and "-50.00" is what subtracting the
+    // withdrawal twice would give.
+    const expected = (await getExpectedCash(pool, tenant.locationId, day.id)).expected;
+    expect(expected).toBe("50.00");
+    expect(expected).not.toBe("250.00");
+    expect(expected).not.toBe("-50.00");
+  });
+
+  it("counts the opening float once, though the schema holds it twice", async () => {
+    // `business_days.opening_cash` and the `OPENING` movement written beside
+    // it (CASH-01) describe the same 150 €. Summing the ledger naively —
+    // including OPENING — on top of the day's own column would answer 300.
+    const day = await openNewBusinessDay(context, 15_000);
+
+    const result = await getExpectedCash(pool, tenant.locationId, day.id);
+    expect(result.opening_cash).toBe("150.00");
+    expect(result.cash_in).toBe("0.00");
+    expect(result.expected).toBe("150.00");
+  });
+
+  it("closes on the very figure the caisse screen was showing", async () => {
+    const day = await openNewBusinessDay(context, 15_000);
+    await sell(context, [{ productId: coffee.id, quantity: 10 }], { paymentMethod: "CASH" });
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: day.id,
+      type: "OUT",
+      category: "END_OF_SERVICE_WITHDRAWAL",
+      amount: "200.00",
+      reason: "Retrait du tiroir",
+      createdBy: context.userId,
+    });
+    const shown = (await getExpectedCash(pool, tenant.locationId, day.id)).expected;
+
+    const { closed } = await closeCurrentBusinessDay(context);
+
+    // The regression this ticket exists for: the closing computed
+    // `opening_cash + cash_revenue` and never read the movement ledger, so
+    // it wrote 250,00 € against a drawer holding 50,00 € — and the cashier
+    // was asked to justify a 200 € shortfall that was their own recorded
+    // withdrawal.
+    expect(closed.closing_cash).toBe("50.00");
+    expect(closed.closing_cash).toBe(shown);
   });
 });

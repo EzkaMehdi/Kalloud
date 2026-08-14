@@ -1,7 +1,7 @@
 import { withTransaction } from "../db";
 import { ConflictError, isUniqueViolation, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
-import { fromCents, toCents } from "../money";
+import { fromCents } from "../money";
 import {
   type BusinessDayRow,
   closeBusinessDay,
@@ -9,7 +9,11 @@ import {
   getBusinessDaySummary,
   openBusinessDay,
 } from "../repositories/business-days";
-import { createCashMovement, OPENING_FLOAT_CATEGORY } from "../repositories/cash-movements";
+import {
+  createCashMovement,
+  getExpectedCash,
+  OPENING_FLOAT_CATEGORY,
+} from "../repositories/cash-movements";
 import type { RequestContext } from "../context";
 
 /**
@@ -90,11 +94,15 @@ export interface CloseBusinessDayResult {
  *
  * A closed day is final (DEC-04): there is deliberately no reopen path.
  *
- * Scope note: the closing figure stays `opening_cash + cash_revenue`, the
- * same arithmetic this function already used. The canonical expected-cash
- * formula (adding movements in and out, net of cash refunds) is CASH-04,
- * and the counted amount and variance the user types in are CASH-05;
- * neither is anticipated here. Guarding two concurrent closes is CASH-06.
+ * CASH-04: the closing figure is now `getExpectedCash`, the one shared
+ * definition of what should be in the drawer. It previously computed
+ * `opening_cash + cash_revenue` and ignored the cash movement ledger
+ * entirely, so a day opened at 150 €, selling 100 € in cash, with a 200 €
+ * end-of-service withdrawal, closed at 250 € against a drawer holding 50 €.
+ *
+ * Scope note: the counted amount and the variance the user types in are
+ * CASH-05, and guarding two concurrent closes is CASH-06; neither is
+ * anticipated here.
  */
 export async function closeCurrentBusinessDay(
   context: RequestContext,
@@ -106,18 +114,15 @@ export async function closeCurrentBusinessDay(
     }
 
     const summary = await getBusinessDaySummary(client, context.locationId, activeDay.id);
-    // Summed in integer cents rather than with `Number(a) + Number(b)`:
-    // adding two DECIMAL(10,2) values as binary floats can land a centime
-    // off, and this figure is what the closing cash count is compared to
-    // (DEC-05).
-    const calculatedClosingCash = fromCents(
-      toCents(activeDay.opening_cash) + toCents(summary.cash_revenue),
-    );
+    // The arithmetic itself is done in SQL over DECIMAL(10,2), never by
+    // adding these values as JS binary floats — a centime off here is a
+    // centime the cashier is asked to justify (DEC-05).
+    const expectedCash = await getExpectedCash(client, context.locationId, activeDay.id);
     const closed = await closeBusinessDay(
       client,
       context.locationId,
       activeDay.id,
-      calculatedClosingCash,
+      expectedCash.expected,
     );
 
     await recordAuditEvent(client, {
@@ -127,7 +132,7 @@ export async function closeCurrentBusinessDay(
       targetType: "business_day",
       targetId: activeDay.id,
       before: { status: activeDay.status },
-      after: { status: closed.status, closingCash: calculatedClosingCash, summary },
+      after: { status: closed.status, closingCash: expectedCash.expected, expectedCash, summary },
     });
 
     return { closed: { ...closed, summary } };

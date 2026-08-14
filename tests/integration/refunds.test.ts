@@ -7,7 +7,7 @@ import {
   getBusinessDaySummary,
   openBusinessDay,
 } from "../../lib/repositories/business-days";
-import { getCashBalance } from "../../lib/repositories/cash-movements";
+import { getExpectedCash } from "../../lib/repositories/cash-movements";
 import { listPaymentsForOrder } from "../../lib/repositories/payments";
 import { createProduct, listProducts, type ProductRow } from "../../lib/repositories/products";
 import { listStockMovements } from "../../lib/repositories/stock-movements";
@@ -380,7 +380,7 @@ describe("ORD-10/DEC-09: refunds reach the figures", () => {
     const { order } = await sell(context, [{ productId: coffee.id, quantity: 1 }], {
       paymentMethod: "CASH",
     });
-    expect(await getCashBalance(pool, tenant.locationId, day!.id)).toBe("10.00");
+    expect((await getExpectedCash(pool, tenant.locationId, day!.id)).expected).toBe("10.00");
 
     await refundOrder(
       context,
@@ -389,7 +389,7 @@ describe("ORD-10/DEC-09: refunds reach the figures", () => {
     );
 
     // DEC-09: "les ventes nettes intègrent les remboursements espèces".
-    expect(await getCashBalance(pool, tenant.locationId, day!.id)).toBe("0.00");
+    expect((await getExpectedCash(pool, tenant.locationId, day!.id)).expected).toBe("0.00");
   });
 
   it("shows the refund on the receipt without erasing what was charged", async () => {

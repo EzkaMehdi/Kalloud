@@ -1,19 +1,26 @@
-import type { NextRequest } from "next/server";
 import { requirePermission } from "@/lib/authz";
 import { requireRequestContext } from "@/lib/context";
 import { apiRoute, jsonOk } from "@/lib/http";
-import { closeAndReopenBusinessDay } from "@/lib/services/business-day";
-import { parseJsonBody } from "@/lib/validation/parse";
-import { closeBusinessDaySchema } from "@/lib/validation/schemas";
+import { closeCurrentBusinessDay } from "@/lib/services/business-day";
 
-export const POST = apiRoute(async (request: NextRequest) => {
+/**
+ * CASH-02: closes the active service and stops there.
+ *
+ * Two things changed from the combined action this replaces. It no longer
+ * demands `business_day:open` on top of `business_day:close` — that second
+ * permission was only needed because closing also opened the next service,
+ * so someone allowed to close but not to open could not close at all. And it
+ * no longer reads a body: `nextOpeningCash` fed the reopen half, which now
+ * belongs to `POST /api/business-day` and its own explicit confirmation
+ * (DEC-04). A stale client still posting `{nextOpeningCash}` here has that
+ * body ignored and gets exactly one closed service — which is the point:
+ * the failure mode of an out-of-date caller is "no service was opened",
+ * never "a service was opened without anyone choosing to".
+ */
+export const POST = apiRoute(async () => {
   const context = await requireRequestContext();
   requirePermission(context.role, "business_day:close");
-  requirePermission(context.role, "business_day:open");
 
-  // `Number(body.nextOpeningCash ?? 0)` used to turn "abc" into NaN and hand
-  // it straight to a DECIMAL column; the schema rejects it first (API-01).
-  const body = await parseJsonBody(request, closeBusinessDaySchema);
-  const result = await closeAndReopenBusinessDay(context, body.nextOpeningCash ?? 0);
+  const result = await closeCurrentBusinessDay(context);
   return jsonOk(result);
 });

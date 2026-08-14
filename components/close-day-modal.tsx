@@ -3,7 +3,6 @@
 import { CalendarCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
-import { TextField } from "@/components/ui/text-field";
 import { ApiError, apiFetch } from "@/lib/client/api";
 
 interface Summary {
@@ -19,19 +18,28 @@ interface SummaryResponse {
   summary: Summary;
 }
 
-interface CloseResponse {
-  opened: { opening_cash: string };
-}
-
+/**
+ * CASH-02: closes the service and stops there. This dialog used to carry a
+ * "fond de caisse du nouveau service" field and close-then-reopen in one
+ * confirmation, which is precisely what DEC-04 rules out — the next service
+ * is now opened by its own action, from the caisse screen, when someone
+ * decides to open it.
+ *
+ * The wording is the one CASH-02 mandates ("Compter et clôturer la caisse").
+ * The counted-cash input and the variance it produces are CASH-05; until
+ * then this screen shows the service's figures and closes on the calculated
+ * amount, and deliberately does not pretend to collect a count it has
+ * nowhere to store.
+ */
 export function CloseDayModal({
   onClose,
   onFinished,
 }: {
   onClose: () => void;
-  onFinished: (opening: number) => void;
+  onFinished: () => void;
 }) {
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [opening, setOpening] = useState("150");
+  const [openingCash, setOpeningCash] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
@@ -40,7 +48,7 @@ export function CloseDayModal({
     apiFetch<SummaryResponse>("/api/business-day/summary")
       .then((data) => {
         setSummary(data.summary);
-        setOpening(String(data.day.opening_cash));
+        setOpeningCash(data.day.opening_cash);
       })
       .catch((caught) => {
         setLoadError(
@@ -57,11 +65,8 @@ export function CloseDayModal({
     setSaving(true);
     setError("");
     try {
-      const data = await apiFetch<CloseResponse>("/api/business-day/close", {
-        method: "POST",
-        body: JSON.stringify({ nextOpeningCash: Number(opening) }),
-      });
-      onFinished(Number(data.opened.opening_cash));
+      await apiFetch("/api/business-day/close", { method: "POST" });
+      onFinished();
       onClose();
     } catch (caught) {
       setError(caught instanceof ApiError ? caught.message : "Erreur de clôture.");
@@ -71,14 +76,11 @@ export function CloseDayModal({
   }
 
   return (
-    <Dialog
-      title="Clôturer et ouvrir un nouveau service"
-      eyebrow="Clôture manuelle"
-      onClose={onClose}
-    >
+    <Dialog title="Compter et clôturer la caisse" eyebrow="Clôture du service" onClose={onClose}>
       <p className="modal-help">
-        Le bilan du service actuel est figé, puis un nouveau service démarre immédiatement avec le
-        fond de caisse indiqué ci-dessous. Idéal quand le service se termine après minuit.
+        Le bilan de ce service est figé définitivement : une journée clôturée ne peut pas être
+        rouverte. Aucun nouveau service n&apos;est ouvert automatiquement — vous pourrez en ouvrir
+        un ensuite, si vous le souhaitez.
       </p>
       {loadError ? (
         <p className="form-error" role="alert">
@@ -86,6 +88,10 @@ export function CloseDayModal({
         </p>
       ) : summary ? (
         <div className="closing-summary">
+          <div>
+            <span>Fond de caisse d&apos;ouverture</span>
+            <b>{euro(openingCash ?? 0)}</b>
+          </div>
           <div>
             <span>Chiffre d&apos;affaires</span>
             <b>{euro(summary.revenue)}</b>
@@ -108,14 +114,6 @@ export function CloseDayModal({
           Chargement du bilan…
         </p>
       )}
-      <TextField
-        label="Fond de caisse du nouveau service (€)"
-        type="number"
-        step="0.01"
-        min="0"
-        value={opening}
-        onChange={(event) => setOpening(event.target.value)}
-      />
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -128,7 +126,7 @@ export function CloseDayModal({
         style={{ width: "100%", marginTop: 20 }}
       >
         <CalendarCheck size={18} aria-hidden="true" />
-        {saving ? "Clôture…" : "Clôturer et ouvrir le nouveau service"}
+        {saving ? "Clôture…" : "Compter et clôturer la caisse"}
       </button>
     </Dialog>
   );

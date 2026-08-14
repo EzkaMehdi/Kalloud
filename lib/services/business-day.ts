@@ -15,13 +15,14 @@ import type { RequestContext } from "../context";
 /**
  * CASH-01: opens the very first business day for a location, or any
  * subsequent one after a clean close. Before this existed, the only way
- * into `business_days` was `closeAndReopenBusinessDay` below, which
- * requires an active day to close first — a new establishment could never
- * open its first one through the API at all (scripts/seed.mjs worked
- * around this with a raw INSERT, which is exactly the kind of gap this
- * closes). CASH-02 (phase 5A) is what gives "open" and "close" their own
- * distinct, separately-confirmed UI actions per DEC-04; this is the
- * service layer that makes standalone opening possible at all.
+ * into `business_days` was the close-and-reopen call below, which requires
+ * an active day to close first — a new establishment could never open its
+ * first one through the API at all (scripts/seed.mjs worked around this
+ * with a raw INSERT, which is exactly the kind of gap this closes).
+ *
+ * CASH-02: that combined call is gone, so this is now the single entry
+ * point for opening a service, whether it is the first of an establishment
+ * or the next one after a close.
  */
 export async function openNewBusinessDay(
   context: RequestContext,
@@ -70,26 +71,32 @@ export async function openNewBusinessDay(
   }
 }
 
-export interface CloseAndReopenResult {
+export interface CloseBusinessDayResult {
   closed: BusinessDayRow & { summary: Awaited<ReturnType<typeof getBusinessDaySummary>> };
-  opened: BusinessDayRow;
 }
 
 /**
- * TODO(CASH-02, phase 5A): the prototype (and this port) combines "close"
- * and "open the next service" into a single action, which DEC-04 explicitly
- * decided against for the final product ("Nouvelle journée" must become two
- * distinct, separately confirmed actions). Kept as one call here only to
- * preserve current behaviour while the rest of the security/foundation work
- * lands; CASH-02 replaces this with `closeBusinessDay`/`openBusinessDay`
- * exposed as separate, explicitly-confirmed endpoints.
+ * CASH-02: closes the active service, and nothing else. This replaces
+ * `closeAndReopenBusinessDay`, which closed the day *and* opened the next
+ * one in the same call — DEC-04 rules that out explicitly ("une nouvelle
+ * journée peut être ouverte immédiatement (proposé par l'interface) mais
+ * reste un choix explicite de l'utilisateur, jamais automatique"). Opening
+ * is `openNewBusinessDay` above, reached by its own endpoint and its own
+ * confirmation, so a cashier who only meant to close the till no longer
+ * silently starts a second service — and no longer has a fund amount
+ * imposed on that service by the closing dialog.
+ *
+ * A closed day is final (DEC-04): there is deliberately no reopen path.
+ *
+ * Scope note: the closing figure stays `opening_cash + cash_revenue`, the
+ * same arithmetic this function already used. The canonical expected-cash
+ * formula (adding movements in and out, net of cash refunds) is CASH-04,
+ * and the counted amount and variance the user types in are CASH-05;
+ * neither is anticipated here. Guarding two concurrent closes is CASH-06.
  */
-export async function closeAndReopenBusinessDay(
+export async function closeCurrentBusinessDay(
   context: RequestContext,
-  nextOpeningCashCents: number,
-): Promise<CloseAndReopenResult> {
-  const nextOpeningCash = fromCents(nextOpeningCashCents);
-
+): Promise<CloseBusinessDayResult> {
   return withTransaction(async (client) => {
     const activeDay = await getActiveBusinessDay(client, context.locationId);
     if (!activeDay) {
@@ -111,25 +118,16 @@ export async function closeAndReopenBusinessDay(
       calculatedClosingCash,
     );
 
-    const opened = await openBusinessDay(client, context.locationId, nextOpeningCash);
-    await createCashMovement(client, context.locationId, {
-      businessDayId: opened.id,
-      type: "OPENING",
-      amount: nextOpeningCash,
-      reason: "Fond de caisse — nouvelle journée",
-      createdBy: context.userId,
-    });
-
     await recordAuditEvent(client, {
       locationId: context.locationId,
       actorUserId: context.userId,
-      action: "business_day.close_and_reopen",
+      action: "business_day.close",
       targetType: "business_day",
       targetId: activeDay.id,
       before: { status: activeDay.status },
-      after: { closedId: closed.id, openedId: opened.id, summary },
+      after: { status: closed.status, closingCash: calculatedClosingCash, summary },
     });
 
-    return { closed: { ...closed, summary }, opened };
+    return { closed: { ...closed, summary } };
   });
 }

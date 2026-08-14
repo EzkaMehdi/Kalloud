@@ -1,9 +1,10 @@
 "use client";
 
-import { CalendarPlus, Plus, Table2 } from "lucide-react";
+import { CalendarCheck, CalendarPlus, Plus, Table2 } from "lucide-react";
 import { useState } from "react";
 import { CashMovementModal } from "@/components/cash-movement-modal";
 import { CloseDayModal } from "@/components/close-day-modal";
+import { OpenDayModal } from "@/components/open-day-modal";
 import { OrderDrawer, type Ticket } from "@/components/order-drawer";
 import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
@@ -26,6 +27,13 @@ interface DiningTable {
 
 interface CashSummary {
   balance: string;
+  /**
+   * CASH-01 exposed this so the screen could stop assuming a service was
+   * always open; CASH-02 is what finally reads it. `false` and a balance of
+   * "0.00" are different situations — no service at all versus an open till
+   * that happens to be empty — and the header now says which one it is.
+   */
+  businessDayOpen: boolean;
 }
 
 interface DashboardSummary {
@@ -55,6 +63,7 @@ export default function Caisse() {
   const [notice, setNotice] = useState("");
   const [movementOpen, setMovementOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  const [openDayOpen, setOpenDayOpen] = useState(false);
   const [now] = useState(() => new Date());
 
   function message(text: string) {
@@ -84,11 +93,25 @@ export default function Caisse() {
     message("Mouvement enregistré dans le journal de caisse");
   }
 
-  function newService() {
+  /**
+   * CASH-02: closing closes, and says so. The old copy here announced "un
+   * nouveau service est ouvert" because the single endpoint really did open
+   * one; DEC-04 requires that to be a separate, deliberate act, so the
+   * notice now points at the choice rather than reporting a decision the
+   * user never made.
+   */
+  function serviceClosed() {
     cashQuery.refetch();
     revenueQuery.refetch();
     tablesQuery.refetch();
-    message("Service clôturé : un nouveau service est ouvert");
+    message("Service clôturé. Ouvrez un nouveau service quand vous êtes prêt.");
+  }
+
+  function serviceOpened(openingCash: number) {
+    cashQuery.refetch();
+    revenueQuery.refetch();
+    tablesQuery.refetch();
+    message(`Service ouvert avec un fond de caisse de ${openingCash.toFixed(2)} €`);
   }
 
   /**
@@ -209,13 +232,30 @@ export default function Caisse() {
         <small>Un service se clôture manuellement</small>
       </div>
 
-      <button className="close-day-button" onClick={() => setCloseOpen(true)}>
-        <CalendarPlus size={18} aria-hidden="true" />
-        <span>
-          <b>Clôturer le service</b>
-          <small>Compter la caisse, figer le bilan et repartir sur un nouveau service</small>
-        </span>
-      </button>
+      {/* CASH-02/DEC-04: one action at a time, and only once the real state
+          is known. The single "Clôturer le service" button this replaces did
+          both jobs in one confirmation — closing the service and starting
+          the next one — which is the implicit opening DEC-04 forbids. While
+          the state is still loading, neither action is offered rather than
+          guessing at one and mislabelling it. */}
+      {cashQuery.state.status === "success" &&
+        (cashQuery.state.data.businessDayOpen ? (
+          <button className="close-day-button" onClick={() => setCloseOpen(true)}>
+            <CalendarCheck size={18} aria-hidden="true" />
+            <span>
+              <b>Compter et clôturer la caisse</b>
+              <small>Figer le bilan de ce service — une journée clôturée est définitive</small>
+            </span>
+          </button>
+        ) : (
+          <button className="close-day-button" onClick={() => setOpenDayOpen(true)}>
+            <CalendarPlus size={18} aria-hidden="true" />
+            <span>
+              <b>Ouvrir le service</b>
+              <small>Saisir le fond de caisse et démarrer une nouvelle journée</small>
+            </span>
+          </button>
+        ))}
 
       {counterQuery.state.status === "success" && counterQuery.state.data.length > 0 && (
         <>
@@ -248,13 +288,16 @@ export default function Caisse() {
           <h2>Plan de salle</h2>
           <p className="eyebrow">Touchez une table pour prendre la commande</p>
         </div>
-        {/* TODO(CASH-02/CASH-07): hardcoded regardless of the real business
-            day state — GET /api/cash-summary now exposes `businessDayOpen`
-            (CASH-01) precisely so this can stop lying once the caisse
-            screen's open/close flow is wired to it. */}
+        {/* CASH-02: reads the real state (CASH-01's `businessDayOpen`)
+            instead of the hardcoded "Service ouvert" that showed even for an
+            establishment which had never opened a day. */}
         <span className="status">
           <span className="dot" aria-hidden="true" />
-          Service ouvert
+          {cashQuery.state.status === "success"
+            ? cashQuery.state.data.businessDayOpen
+              ? "Service ouvert"
+              : "Aucun service ouvert"
+            : "État du service…"}
         </span>
       </div>
 
@@ -319,7 +362,12 @@ export default function Caisse() {
       {movementOpen && (
         <CashMovementModal onClose={() => setMovementOpen(false)} onSaved={movementSaved} />
       )}
-      {closeOpen && <CloseDayModal onClose={() => setCloseOpen(false)} onFinished={newService} />}
+      {closeOpen && (
+        <CloseDayModal onClose={() => setCloseOpen(false)} onFinished={serviceClosed} />
+      )}
+      {openDayOpen && (
+        <OpenDayModal onClose={() => setOpenDayOpen(false)} onOpened={serviceOpened} />
+      )}
     </Shell>
   );
 }

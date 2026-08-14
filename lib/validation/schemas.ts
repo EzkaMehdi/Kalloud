@@ -266,11 +266,10 @@ export const createCashMovementSchema = z
   .transform(({ amount, ...rest }) => ({ ...rest, amountCents: amount }));
 export type CreateCashMovementBody = z.infer<typeof createCashMovementSchema>;
 
-export const closeBusinessDaySchema = z.strictObject({
-  nextOpeningCash: moneyAmountSchema.optional(),
-});
-export type CloseBusinessDayBody = z.infer<typeof closeBusinessDaySchema>;
-
+// CASH-02: closing takes no payload at all any more. `nextOpeningCash` only
+// existed to feed the reopen half of the old combined action, which DEC-04
+// removed; the fund of the *next* service is now stated when that service is
+// explicitly opened, through `openBusinessDaySchema` below.
 export const openBusinessDaySchema = z.strictObject({
   openingCash: moneyAmountSchema.optional(),
 });

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../lib/db";
-import { ConflictError } from "../../lib/errors";
+import { ConflictError, ValidationError } from "../../lib/errors";
 import { getActiveBusinessDay } from "../../lib/repositories/business-days";
 import { listCashMovements } from "../../lib/repositories/cash-movements";
-import { openNewBusinessDay } from "../../lib/services/business-day";
+import { closeCurrentBusinessDay, openNewBusinessDay } from "../../lib/services/business-day";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
@@ -14,10 +14,14 @@ import type { RequestContext } from "../../lib/context";
  * before this change. What was missing, and what these tests actually
  * prove, is the livrable itself: "première ouverture possible". Before
  * openNewBusinessDay existed, the only entry point into `business_days` was
- * closeAndReopenBusinessDay, which requires an active day to close first —
- * a fresh tenant (every real establishment on day one) had no way to open
- * one through the service/API layer at all. scripts/seed.mjs worked around
- * this with a raw INSERT; a real onboarding flow cannot.
+ * the close call, which back then also reopened and which requires an active
+ * day to close first — a fresh tenant (every real establishment on day one)
+ * had no way to open one through the service/API layer at all.
+ * scripts/seed.mjs worked around this with a raw INSERT; a real onboarding
+ * flow cannot.
+ *
+ * The CASH-02 block below covers the other half: closing now closes and
+ * nothing else.
  */
 
 let tenant: TestTenant;
@@ -120,5 +124,85 @@ describe("CASH-01: business day model reliability", () => {
     const active = await getActiveBusinessDay(pool, tenant.locationId);
     expect(active).not.toBeNull();
     expect(active?.opening_cash).toBe("0.00");
+  });
+});
+
+/**
+ * CASH-02's acceptance criterion is a negative one — "aucune nouvelle
+ * journée ouverte implicitement sans choix" — so the assertions that matter
+ * are about what does *not* happen. The previous implementation
+ * (closeAndReopenBusinessDay) closed the day and opened the next one in the
+ * same transaction, with the next service's opening float typed into the
+ * closing dialog; there was no way to simply close a till.
+ */
+describe("CASH-02: closing a service opens nothing", () => {
+  it("leaves the establishment with no open business day at all", async () => {
+    const opened = await openNewBusinessDay(context, 15_000); // 150.00 €
+
+    const { closed } = await closeCurrentBusinessDay(context);
+
+    expect(closed.id).toBe(opened.id);
+    expect(closed.status).toBe("CLOSED");
+    // The heart of the ticket: previously this was a brand new OPEN row.
+    expect(await getActiveBusinessDay(pool, tenant.locationId)).toBeNull();
+  });
+
+  it("records no opening float for a service nobody asked to open", async () => {
+    await openNewBusinessDay(context, 15_000);
+    await closeCurrentBusinessDay(context);
+
+    // Exactly one OPENING movement: the one from the open above. The old
+    // close inserted a second one ("Fond de caisse — nouvelle journée") for
+    // the service it silently started, which is money appearing in the
+    // journal without anyone having decided to put it there.
+    const openings = (await listCashMovements(pool, tenant.locationId)).filter(
+      (movement) => movement.type === "OPENING",
+    );
+    expect(openings).toHaveLength(1);
+    expect(openings[0].amount).toBe("150.00");
+  });
+
+  it("closes on opening float + cash revenue, and audits it as a close", async () => {
+    await openNewBusinessDay(context, 15_000);
+
+    const { closed } = await closeCurrentBusinessDay(context);
+
+    // No sales in this test, so the expected close is the float itself.
+    expect(closed.closing_cash).toBe("150.00");
+
+    const { rows } = await pool.query<{ action: string; target_id: string }>(
+      "SELECT action, target_id FROM audit_events WHERE location_id = $1 ORDER BY id DESC LIMIT 1",
+      [tenant.locationId],
+    );
+    // Renamed from `business_day.close_and_reopen`: the audit trail should
+    // describe one act, because only one act happened.
+    expect(rows[0].action).toBe("business_day.close");
+    // `target_id` is a BIGINT, which pg hands back as a string.
+    expect(Number(rows[0].target_id)).toBe(closed.id);
+  });
+
+  it("refuses to close when no service is open", async () => {
+    await expect(closeCurrentBusinessDay(context)).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("lets a new service be opened after a close — as a separate, deliberate call", async () => {
+    const first = await openNewBusinessDay(context, 15_000);
+    await closeCurrentBusinessDay(context);
+
+    const second = await openNewBusinessDay(context, 5_000);
+
+    expect(second.id).not.toBe(first.id);
+    expect(second.opening_cash).toBe("50.00");
+    expect((await getActiveBusinessDay(pool, tenant.locationId))?.id).toBe(second.id);
+  });
+
+  it("keeps a closed day closed: closing twice is refused, not repeated", async () => {
+    await openNewBusinessDay(context, 15_000);
+    await closeCurrentBusinessDay(context);
+
+    // DEC-04: a closed day is final and there is no reopen path, so the
+    // second attempt has nothing to act on. (Two *concurrent* closes racing
+    // each other are CASH-06's problem, not this one.)
+    await expect(closeCurrentBusinessDay(context)).rejects.toBeInstanceOf(ValidationError);
   });
 });

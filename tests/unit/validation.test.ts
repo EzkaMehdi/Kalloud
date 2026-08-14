@@ -303,12 +303,76 @@ describe("API-01: catalog, floor plan and cash payloads", () => {
 
   it("requires a strictly positive cash movement with a motive", () => {
     expect(
-      createCashMovementSchema.parse({ type: "IN", amount: "20.00", reason: " Monnaie " }),
-    ).toEqual({ type: "IN", amountCents: 2000, reason: "Monnaie" });
-    expect(accepts(createCashMovementSchema, { type: "IN", amount: 0, reason: "Rien" })).toBe(
+      createCashMovementSchema.parse({
+        type: "IN",
+        category: "FUND_TOPUP",
+        amount: "20.00",
+        reason: " Monnaie ",
+      }),
+    ).toEqual({ type: "IN", category: "FUND_TOPUP", amountCents: 2000, reason: "Monnaie" });
+    expect(
+      accepts(createCashMovementSchema, {
+        type: "IN",
+        category: "OTHER",
+        amount: 0,
+        reason: "Rien",
+      }),
+    ).toBe(false);
+    expect(
+      accepts(createCashMovementSchema, {
+        type: "IN",
+        category: "OTHER",
+        amount: 20,
+        reason: "  ",
+      }),
+    ).toBe(false);
+  });
+
+  /**
+   * CASH-03/DEC-11. The pairing matters more than the enum: a category is
+   * only meaningful for one direction, and an END_OF_SERVICE_WITHDRAWAL
+   * recorded as an *inflow* is not a typo to tolerate — CASH-04 sums that
+   * category apart from the others to avoid double-counting withdrawals.
+   */
+  it("pairs a cash movement category with its direction", () => {
+    const base = { amount: "20.00", reason: "Motif" };
+
+    expect(accepts(createCashMovementSchema, { ...base, type: "OUT", category: "PURCHASE" })).toBe(
+      true,
+    );
+    expect(
+      accepts(createCashMovementSchema, {
+        ...base,
+        type: "OUT",
+        category: "END_OF_SERVICE_WITHDRAWAL",
+      }),
+    ).toBe(true);
+    // "OTHER" is the one category both directions accept.
+    expect(accepts(createCashMovementSchema, { ...base, type: "IN", category: "OTHER" })).toBe(
+      true,
+    );
+
+    // An outflow category on an inflow, and the reverse.
+    expect(accepts(createCashMovementSchema, { ...base, type: "IN", category: "PURCHASE" })).toBe(
       false,
     );
-    expect(accepts(createCashMovementSchema, { type: "IN", amount: 20, reason: "  " })).toBe(false);
+    expect(
+      accepts(createCashMovementSchema, { ...base, type: "IN", category: "BANK_DEPOSIT" }),
+    ).toBe(false);
+    expect(
+      accepts(createCashMovementSchema, { ...base, type: "OUT", category: "FUND_TOPUP" }),
+    ).toBe(false);
+
+    // The opening float is not something a client may record at all: it is
+    // excluded from the accepted types, and its category from the enum.
+    expect(
+      accepts(createCashMovementSchema, { ...base, type: "OPENING", category: "OPENING_FLOAT" }),
+    ).toBe(false);
+
+    // Stating a category is mandatory — no silent fallback to "OTHER", which
+    // would let every movement be filed as uncategorised without anyone
+    // choosing that.
+    expect(accepts(createCashMovementSchema, { ...base, type: "OUT" })).toBe(false);
   });
 
   it("defaults the dashboard period but rejects an unknown one", () => {

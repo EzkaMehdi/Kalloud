@@ -1,12 +1,24 @@
 import type { Queryable } from "../db";
+import type { CashMovementCategory } from "../validation/primitives";
 
 export type CashMovementType = "OPENING" | "IN" | "OUT";
+
+/**
+ * CASH-03/DEC-11: the opening float's category. It lives here rather than in
+ * the client-facing enum because `CASH_MOVEMENT_TYPES` deliberately keeps
+ * `OPENING` out of what an API caller may send — only the business-day
+ * service records one.
+ */
+export const OPENING_FLOAT_CATEGORY = "OPENING_FLOAT";
+
+export type StoredCashMovementCategory = CashMovementCategory | typeof OPENING_FLOAT_CATEGORY;
 
 export interface CashMovementRow {
   id: number;
   location_id: number;
   business_day_id: number | null;
   type: CashMovementType;
+  category: StoredCashMovementCategory;
   amount: string;
   reason: string;
   created_by: number;
@@ -16,6 +28,8 @@ export interface CashMovementRow {
 export interface CreateCashMovementInput {
   businessDayId: number | null;
   type: CashMovementType;
+  /** Constrained against `type` by `migrations/0016` and by createCashMovementSchema. */
+  category: StoredCashMovementCategory;
   /**
    * A `DECIMAL(10,2)`-shaped string ("20.00"), as produced by
    * `fromCents()`. Deliberately not a JS number: binary floating point
@@ -35,9 +49,17 @@ export async function createCashMovement(
   const {
     rows: [row],
   } = await db.query<CashMovementRow>(
-    `INSERT INTO cash_movements (location_id, business_day_id, type, amount, reason, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [locationId, input.businessDayId, input.type, input.amount, input.reason, input.createdBy],
+    `INSERT INTO cash_movements (location_id, business_day_id, type, category, amount, reason, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [
+      locationId,
+      input.businessDayId,
+      input.type,
+      input.category,
+      input.amount,
+      input.reason,
+      input.createdBy,
+    ],
   );
   return row;
 }

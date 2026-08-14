@@ -140,8 +140,10 @@ async function seed(client) {
       [location.id, OPENING_CASH],
     );
     await client.query(
-      `INSERT INTO cash_movements (location_id, business_day_id, type, amount, reason, created_by)
-       VALUES ($1, $2, 'OPENING', $3, 'Fond de caisse initial', $4)`,
+      // CASH-03/DEC-11: `category` is NOT NULL and paired with `type` by a
+      // CHECK constraint; OPENING admits exactly one category.
+      `INSERT INTO cash_movements (location_id, business_day_id, type, category, amount, reason, created_by)
+       VALUES ($1, $2, 'OPENING', 'OPENING_FLOAT', $3, 'Fond de caisse initial', $4)`,
       [location.id, businessDay.id, OPENING_CASH, userIdByRole.OWNER],
     );
 

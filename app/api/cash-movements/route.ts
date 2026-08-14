@@ -44,6 +44,7 @@ export const POST = apiRoute(async (request: NextRequest) => {
       const movement = await createCashMovement(pool, context.locationId, {
         businessDayId: day.id,
         type: body.type,
+        category: body.category,
         amount: fromCents(body.amountCents),
         reason: body.reason,
         createdBy: context.userId,
@@ -55,7 +56,16 @@ export const POST = apiRoute(async (request: NextRequest) => {
         action: "cash_movement.create",
         targetType: "cash_movement",
         targetId: movement.id,
-        after: { type: movement.type, amount: movement.amount, reason: movement.reason },
+        // CASH-03: the category is part of what makes the movement
+        // auditable. Without it the trail records that 200 € left the till
+        // but not whether that was a purchase or the end-of-service
+        // withdrawal — the one distinction CASH-04 reconciles against.
+        after: {
+          type: movement.type,
+          category: movement.category,
+          amount: movement.amount,
+          reason: movement.reason,
+        },
       });
 
       return movement;

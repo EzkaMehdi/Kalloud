@@ -213,6 +213,7 @@ describe("SEC-08: cash and business-day isolation", () => {
     await createCashMovement(pool, tenantA.locationId, {
       businessDayId: dayA.id,
       type: "IN",
+      category: "OTHER",
       amount: "10.00",
       reason: "A movement",
       createdBy: contextA.userId,
@@ -220,6 +221,7 @@ describe("SEC-08: cash and business-day isolation", () => {
     await createCashMovement(pool, tenantB.locationId, {
       businessDayId: dayB.id,
       type: "IN",
+      category: "OTHER",
       amount: "999.00",
       reason: "B movement",
       createdBy: ownerB.userId,

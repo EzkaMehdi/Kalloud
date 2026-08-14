@@ -183,6 +183,47 @@ export const cashMovementTypeSchema = z.enum(CASH_MOVEMENT_TYPES, {
   error: 'Type de mouvement invalide (attendu "IN" ou "OUT").',
 });
 
+/**
+ * CASH-03/DEC-11: the business nature of a movement, next to the `type` that
+ * carries its sign. Declared per type rather than as one flat enum because a
+ * category is only meaningful for one direction — an
+ * `END_OF_SERVICE_WITHDRAWAL` that adds money to the till is not a typo to
+ * tolerate, it is a corrupt ledger — and because the modal renders exactly
+ * this list for the type currently selected. `migrations/0016` enforces the
+ * same pairing in the database, which has writers other than this schema.
+ *
+ * `OPENING_FLOAT` is absent on purpose: `CASH_MOVEMENT_TYPES` already keeps
+ * `OPENING` out of what a client may send, so the opening float stays
+ * something only the business-day service (CASH-02) can record.
+ */
+export type ClientCashMovementType = (typeof CASH_MOVEMENT_TYPES)[number];
+
+export const CASH_MOVEMENT_CATEGORIES_BY_TYPE = {
+  IN: ["FUND_TOPUP", "OTHER"],
+  OUT: ["END_OF_SERVICE_WITHDRAWAL", "PURCHASE", "BANK_DEPOSIT", "OTHER"],
+} as const satisfies Record<ClientCashMovementType, readonly string[]>;
+
+export const CASH_MOVEMENT_CATEGORIES = [
+  "FUND_TOPUP",
+  "END_OF_SERVICE_WITHDRAWAL",
+  "PURCHASE",
+  "BANK_DEPOSIT",
+  "OTHER",
+] as const;
+export type CashMovementCategory = (typeof CASH_MOVEMENT_CATEGORIES)[number];
+export const cashMovementCategorySchema = z.enum(CASH_MOVEMENT_CATEGORIES, {
+  error: "Catégorie de mouvement invalide.",
+});
+
+/** French labels, shared by the movement modal and the cash journal (CASH-07). */
+export const CASH_MOVEMENT_CATEGORY_LABELS: Record<CashMovementCategory, string> = {
+  FUND_TOPUP: "Apport de monnaie",
+  END_OF_SERVICE_WITHDRAWAL: "Retrait de fin de service",
+  PURCHASE: "Achat ou dépense",
+  BANK_DEPOSIT: "Dépôt en banque",
+  OTHER: "Autre",
+};
+
 // A dining-table status enum used to live here. ORD-03 removed the stored
 // column entirely — occupancy is derived from the table's open ticket — so
 // there is no such value for a client to send any more, and validating one

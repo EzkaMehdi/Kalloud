@@ -1,5 +1,7 @@
 import { z } from "zod";
 import {
+  CASH_MOVEMENT_CATEGORIES_BY_TYPE,
+  cashMovementCategorySchema,
   cashMovementTypeSchema,
   dashboardPeriodSchema,
   emailSchema,
@@ -256,6 +258,7 @@ export type CancelTicketBody = z.infer<typeof cancelTicketSchema>;
 export const createCashMovementSchema = z
   .strictObject({
     type: cashMovementTypeSchema,
+    category: cashMovementCategorySchema,
     amount: moneyAmountSchema,
     reason: reasonSchema,
   })
@@ -263,6 +266,18 @@ export const createCashMovementSchema = z
     error: "Le montant doit être supérieur à zéro.",
     path: ["amount"],
   })
+  // CASH-03/DEC-11: a category only exists for one direction. Checked here so
+  // the client gets a named field back (API-01) rather than the database's
+  // constraint violation surfacing as an opaque 500 — `migrations/0016`
+  // enforces the same rule for every other writer.
+  .refine(
+    (body) =>
+      (CASH_MOVEMENT_CATEGORIES_BY_TYPE[body.type] as readonly string[]).includes(body.category),
+    {
+      error: "Cette catégorie ne correspond pas au sens du mouvement.",
+      path: ["category"],
+    },
+  )
   .transform(({ amount, ...rest }) => ({ ...rest, amountCents: amount }));
 export type CreateCashMovementBody = z.infer<typeof createCashMovementSchema>;
 

@@ -5,6 +5,11 @@ import { FormEvent, useState } from "react";
 import { Dialog } from "@/components/ui/dialog";
 import { TextField } from "@/components/ui/text-field";
 import { ApiError, apiFetch } from "@/lib/client/api";
+import {
+  CASH_MOVEMENT_CATEGORIES_BY_TYPE,
+  CASH_MOVEMENT_CATEGORY_LABELS,
+  type CashMovementCategory,
+} from "@/lib/validation/primitives";
 
 export function CashMovementModal({
   onClose,
@@ -14,6 +19,12 @@ export function CashMovementModal({
   onSaved: (amount: number, type: "IN" | "OUT") => void;
 }) {
   const [type, setType] = useState<"IN" | "OUT">("IN");
+  // CASH-03/DEC-11: "OTHER" is the default on purpose. It is the one category
+  // valid for both directions, and it is the honest answer until the user
+  // states otherwise — defaulting to the first of the list would silently
+  // file movements as "Retrait de fin de service", the very category CASH-04
+  // must be able to trust.
+  const [category, setCategory] = useState<CashMovementCategory>("OTHER");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
@@ -22,6 +33,18 @@ export function CashMovementModal({
   // movement, reused on every retry so a lost response cannot become two
   // withdrawals in the cash journal.
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+
+  /**
+   * Switching direction can invalidate the chosen category (DEC-11 pairs the
+   * two), so it falls back to the one value both directions accept rather
+   * than being left pointing at a category the server would reject.
+   */
+  function changeType(next: "IN" | "OUT") {
+    setType(next);
+    if (!(CASH_MOVEMENT_CATEGORIES_BY_TYPE[next] as readonly string[]).includes(category)) {
+      setCategory("OTHER");
+    }
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -36,7 +59,7 @@ export function CashMovementModal({
       await apiFetch("/api/cash-movements", {
         method: "POST",
         idempotencyKey,
-        body: JSON.stringify({ type, amount: value.toFixed(2), reason: reason.trim() }),
+        body: JSON.stringify({ type, category, amount: value.toFixed(2), reason: reason.trim() }),
       });
       setIdempotencyKey(crypto.randomUUID());
       onSaved(value, type);
@@ -61,7 +84,7 @@ export function CashMovementModal({
             type="button"
             role="radio"
             aria-checked={type === "IN"}
-            onClick={() => setType("IN")}
+            onClick={() => changeType("IN")}
             className={type === "IN" ? "selected in" : ""}
           >
             <ArrowDownToLine size={19} aria-hidden="true" />
@@ -72,7 +95,7 @@ export function CashMovementModal({
             type="button"
             role="radio"
             aria-checked={type === "OUT"}
-            onClick={() => setType("OUT")}
+            onClick={() => changeType("OUT")}
             className={type === "OUT" ? "selected out" : ""}
           >
             <ArrowUpFromLine size={19} aria-hidden="true" />
@@ -80,6 +103,24 @@ export function CashMovementModal({
             <small>Dépense ou retrait</small>
           </button>
         </div>
+        {/* CASH-03/DEC-11: the nature of the movement, next to its direction.
+            Two 200 € withdrawals used to be indistinguishable — consumables
+            bought for the kitchen and the end-of-service emptying of the
+            drawer — and CASH-04 has to tell them apart. */}
+        <label className="field-label">
+          Catégorie
+          <select
+            className="input"
+            value={category}
+            onChange={(event) => setCategory(event.target.value as CashMovementCategory)}
+          >
+            {CASH_MOVEMENT_CATEGORIES_BY_TYPE[type].map((value) => (
+              <option key={value} value={value}>
+                {CASH_MOVEMENT_CATEGORY_LABELS[value]}
+              </option>
+            ))}
+          </select>
+        </label>
         <TextField
           label="Montant (€)"
           inputMode="decimal"
@@ -109,7 +150,8 @@ export function CashMovementModal({
           style={{ width: "100%", marginTop: 20 }}
           disabled={saving}
         >
-          {saving ? "Enregistrement…" : `Valider l'${type === "IN" ? "entrée" : "sortie"}`}
+          {/* "Valider l'sortie" — the elision only works for "entrée". */}
+          {saving ? "Enregistrement…" : type === "IN" ? "Valider l'entrée" : "Valider la sortie"}
         </button>
       </form>
     </Dialog>

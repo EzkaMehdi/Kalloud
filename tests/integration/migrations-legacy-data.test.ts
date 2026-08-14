@@ -100,6 +100,16 @@ async function seedPreOrd01Data(client: Client): Promise<void> {
   await client.query(
     "INSERT INTO products (location_id, category_id, name, price, stock_quantity) VALUES (1, 1, 'Café', 2.50, 10)",
   );
+  // Pre-CASH-03 cash movements: a sign, a free-text motive, and no category
+  // column at all. 0016 has to give them one without being able to guess
+  // what they were for.
+  await client.query(`
+    INSERT INTO cash_movements (location_id, business_day_id, type, amount, reason, created_by)
+    VALUES
+      (1, 1, 'OPENING', 100.00, 'Fond de caisse initial', 1),
+      (1, 1, 'IN',       20.00, 'Appoint de monnaie',     1),
+      (1, 1, 'OUT',      15.00, 'Achat de consommables',  1)
+  `);
   // One of each prototype status, including a mixed sale and a cancelled
   // one — the cancelled row is what proves `closed_at` was not blindly
   // renamed into `paid_at`.
@@ -199,6 +209,40 @@ describe("FND-05: migrations run against a database that already holds data", ()
           VALUES (1, 1, 500, 'PAID', 10.00, 8.33, 1.67)
         `),
       ).rejects.toThrow(/orders_author_required_check/);
+    });
+  });
+
+  /**
+   * CASH-03/DEC-11. `0016` adds a NOT NULL category to a table that is never
+   * empty in a real environment — every opening float since CASH-01 is a row
+   * in it — so it is exactly the shape of migration that broke here once.
+   */
+  it("gives pre-CASH-03 cash movements the honest category for their direction", async () => {
+    await withClient(legacyUrl(), async (client) => {
+      const { rows } = await client.query<{ type: string; category: string }>(
+        "SELECT type, category FROM cash_movements ORDER BY id",
+      );
+
+      // An opening movement has only ever meant one thing, so it can be
+      // converted precisely. IN/OUT carry no recoverable intent — the old
+      // rows predate the question — so they get the explicitly generic
+      // value rather than a category invented for them.
+      expect(rows).toEqual([
+        { type: "OPENING", category: "OPENING_FLOAT" },
+        { type: "IN", category: "OTHER" },
+        { type: "OUT", category: "OTHER" },
+      ]);
+    });
+  });
+
+  it("refuses a category that contradicts the movement's direction, in the database itself", async () => {
+    await withClient(legacyUrl(), async (client) => {
+      await expect(
+        client.query(`
+          INSERT INTO cash_movements (location_id, business_day_id, type, category, amount, reason, created_by)
+          VALUES (1, 1, 'IN', 'END_OF_SERVICE_WITHDRAWAL', 10.00, 'Incohérent', 1)
+        `),
+      ).rejects.toThrow(/cash_movements_category_check/);
     });
   });
 

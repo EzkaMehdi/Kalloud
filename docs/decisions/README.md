@@ -16,6 +16,7 @@ sa justification et ses critères d'acceptation.
 | [`DEC-08`](./DEC-08-offline-multi-appareil.md) | Niveau hors ligne et multi-appareil | `DEC-01` |
 | [`DEC-09`](./DEC-09-kpi-exports.md) | KPI et exports du MVP | `DEC-04`, `DEC-05`, `DEC-06` |
 | [`DEC-10`](./DEC-10-conservation-sauvegarde.md) | Conservation, sauvegarde, suppression | `DEC-01` |
+| [`DEC-11`](./DEC-11-categories-mouvements-caisse.md) | Catégoriser les mouvements de caisse | `DEC-04`, `DEC-05` |
 
 Ces décisions sont la source de vérité pour l'implémentation des phases 1 à 7. Toute
 évolution doit être proposée comme une modification de ces fichiers, pas comme un

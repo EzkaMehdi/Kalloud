@@ -9,7 +9,7 @@ import {
   getBusinessDaySummary,
   openBusinessDay,
 } from "../repositories/business-days";
-import { createCashMovement } from "../repositories/cash-movements";
+import { createCashMovement, OPENING_FLOAT_CATEGORY } from "../repositories/cash-movements";
 import type { RequestContext } from "../context";
 
 /**
@@ -41,6 +41,8 @@ export async function openNewBusinessDay(
       await createCashMovement(client, context.locationId, {
         businessDayId: opened.id,
         type: "OPENING",
+        // CASH-03/DEC-11: the one category an API caller cannot send.
+        category: OPENING_FLOAT_CATEGORY,
         amount: openingCash,
         reason: "Fond de caisse — ouverture de service",
         createdBy: context.userId,

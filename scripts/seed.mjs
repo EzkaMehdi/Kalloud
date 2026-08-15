@@ -95,10 +95,14 @@ async function seed(client) {
       categoryIdByName[def.name] = category.id;
     }
 
+    /** Products whose starting balance still needs its ledger entry (see below). */
+    const openingStock = [];
     for (const product of PRODUCT_DEFS) {
-      await client.query(
+      const {
+        rows: [row],
+      } = await client.query(
         `INSERT INTO products (location_id, category_id, name, price, stock_quantity, alert_threshold)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
         [
           location.id,
           categoryIdByName[product.category],
@@ -108,6 +112,13 @@ async function seed(client) {
           product.threshold,
         ],
       );
+
+      // The OPENING_BALANCE movements are written further down, once the
+      // owner exists: `stock_movements.created_by` must name a real user,
+      // and users are created after the catalogue in this script.
+      if (product.stock > 0) {
+        openingStock.push({ productId: row.id, quantity: product.stock });
+      }
     }
 
     for (let index = 1; index <= TABLE_COUNT; index += 1) {
@@ -130,6 +141,23 @@ async function seed(client) {
       await client.query(
         "INSERT INTO memberships (user_id, organization_id, location_id, role) VALUES ($1, $2, $3, $4)",
         [row.id, org.id, location.id, user.role],
+      );
+    }
+
+    // STK-09/DEC-06: `products.stock_quantity` is a cache of the ledger, so a
+    // starting balance needs the OPENING_BALANCE movement that explains it.
+    // Without these rows the seeded catalogue violated that invariant from
+    // the very first `pnpm db:seed` — nine products whose balance no movement
+    // accounted for. STK-02's migration backfilled the products that predated
+    // the ledger, and createProductWithInitialStock covers those created
+    // through the service; this script writes in raw SQL and was the third
+    // writer, missed by both.
+    for (const entry of openingStock) {
+      await client.query(
+        `INSERT INTO stock_movements
+           (location_id, product_id, quantity, type, reason, created_by)
+         VALUES ($1, $2, $3, 'OPENING_BALANCE', 'Stock initial (données de démonstration)', $4)`,
+        [location.id, entry.productId, entry.quantity, userIdByRole.OWNER],
       );
     }
 

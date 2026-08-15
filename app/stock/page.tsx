@@ -21,7 +21,12 @@ interface Product {
 }
 
 export default function Stock() {
-  const productsQuery = useAsyncData(() => apiFetch<Product[]>("/api/products"), []);
+  // STK-08: stock is the screen most likely to be changed from somewhere
+  // else — a delivery counted on a tablet, a sale settled at the till — so
+  // it re-reads when the tab comes back rather than trusting what it loaded.
+  const productsQuery = useAsyncData(() => apiFetch<Product[]>("/api/products"), [], {
+    revalidateOnFocus: true,
+  });
   const user = useCurrentUser();
   const canAdjustStock = user ? can(user.role, "stock:adjust") : false;
   const [filter, setFilter] = useState("");
@@ -104,7 +109,17 @@ export default function Stock() {
                   placeholder="Rechercher un produit"
                 />
               </div>
-              {visible.length === 0 ? (
+              {/* STK-08: two different facts, told apart. An establishment
+                  with no catalogue at all used to be shown "Aucun produit ne
+                  correspond à «  »" — a search result for a search nobody
+                  ran, which reads as a bug rather than as an onboarding
+                  step. */}
+              {products.length === 0 ? (
+                <div className="async-state" role="status">
+                  Aucun produit dans le catalogue. Ajoutez-en depuis les réglages pour suivre leur
+                  stock.
+                </div>
+              ) : visible.length === 0 ? (
                 <div className="async-state" role="status">
                   Aucun produit ne correspond à « {filter} ».
                 </div>

@@ -1,10 +1,11 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { PackagePlus, Search } from "lucide-react";
 import { useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
-import { apiFetch, ApiError } from "@/lib/client/api";
+import { StockAdjustModal } from "@/components/stock-adjust-modal";
+import { apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 import { can } from "@/lib/authz";
 import { useCurrentUser } from "@/lib/client/use-current-user";
@@ -26,33 +27,16 @@ export default function Stock() {
   const [notice, setNotice] = useState("");
 
   /**
-   * TODO(STK-05, phase 5B): still the native prompt(), which is what STK-05
-   * replaces with a contextual dialog carrying the movement type and its
-   * reason. What changed in STK-04 is underneath: the call now posts a
-   * *delta* instead of `product.stock_quantity + amount`, an absolute total
-   * built from this component's own possibly-stale copy — a sale settled
-   * between render and click used to be erased by it.
+   * STK-05: `null` means the dialog is closed, a product means it was opened
+   * from that row, and `"any"` means it was opened from the page-level
+   * action and must ask which product first.
    */
-  async function addStock(product: Product) {
-    const raw = window.prompt(`Quantité à ajouter pour ${product.name}`, "1");
-    const amount = Number(raw);
-    if (!raw || !Number.isFinite(amount) || amount <= 0) return;
-    try {
-      await apiFetch(`/api/products/${product.id}/stock`, {
-        method: "POST",
-        body: JSON.stringify({
-          delta: amount,
-          type: "RECEIPT",
-          reason: "Réception de marchandise",
-        }),
-      });
-      productsQuery.refetch();
-    } catch (caught) {
-      setNotice(
-        caught instanceof ApiError ? caught.message : "Impossible de mettre à jour le stock.",
-      );
-      setTimeout(() => setNotice(""), 4000);
-    }
+  const [adjusting, setAdjusting] = useState<Product | "any" | null>(null);
+
+  function adjusted(message: string) {
+    productsQuery.refetch();
+    setNotice(message);
+    setTimeout(() => setNotice(""), 4000);
   }
 
   return (
@@ -62,12 +46,25 @@ export default function Stock() {
           <p className="eyebrow">Inventaire</p>
           <h1>Les stocks</h1>
         </div>
+        {/* STK-05: the prototype had this button call
+            `alert("Sélectionnez un produit pour le recharger.")` — an action
+            whose whole behaviour was to tell you to go and do something
+            else. UX-01 removed it rather than make it real; the acceptance
+            criterion ("mène à un vrai parcours") is about giving it back its
+            meaning, so it opens the same dialog and asks which product. */}
+        {canAdjustStock && (
+          <button className="soft-button" onClick={() => setAdjusting("any")}>
+            <PackagePlus size={18} aria-hidden="true" />
+            Recharger
+          </button>
+        )}
       </div>
 
       {notice && (
-        <p className="form-error" role="alert">
+        <div className="status" role="status" aria-live="polite" style={{ marginBottom: 12 }}>
+          <span className="dot" aria-hidden="true" />
           {notice}
-        </p>
+        </div>
       )}
 
       <AsyncSection state={productsQuery.state} onRetry={productsQuery.refetch}>
@@ -132,7 +129,7 @@ export default function Stock() {
                           <b>{product.stock_quantity} unités</b>
                           {canAdjustStock ? (
                             <button
-                              onClick={() => addStock(product)}
+                              onClick={() => setAdjusting(product)}
                               className={`stock-alert ${state}`}
                               aria-label={`${label}, ${product.stock_quantity} unités. Ajouter du stock pour ${product.name}`}
                             >
@@ -151,6 +148,15 @@ export default function Stock() {
           );
         }}
       </AsyncSection>
+
+      {adjusting && productsQuery.state.status === "success" && (
+        <StockAdjustModal
+          product={adjusting === "any" ? undefined : adjusting}
+          products={productsQuery.state.data}
+          onClose={() => setAdjusting(null)}
+          onAdjusted={adjusted}
+        />
+      )}
     </Shell>
   );
 }

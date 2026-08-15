@@ -20,11 +20,18 @@ import { ApiError, apiFetch } from "@/lib/client/api";
 export function OpenDayModal({
   onClose,
   onOpened,
+  suggestedOpeningCash,
 }: {
   onClose: () => void;
   onOpened: (openingCash: number) => void;
+  /**
+   * CASH-05: the float the last close said it was leaving in the drawer.
+   * Pre-filled, never imposed — it is a suggestion the person opening can
+   * overwrite, and the drawer they are looking at is the authority.
+   */
+  suggestedOpeningCash?: string | null;
 }) {
-  const [openingCash, setOpeningCash] = useState("");
+  const [openingCash, setOpeningCash] = useState(suggestedOpeningCash ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -65,6 +72,11 @@ export function OpenDayModal({
           min="0"
           value={openingCash}
           onChange={(event) => setOpeningCash(event.target.value)}
+          hint={
+            suggestedOpeningCash
+              ? `Proposé d'après le fond laissé à la dernière clôture (${Number(suggestedOpeningCash).toFixed(2).replace(".", ",")} €).`
+              : undefined
+          }
         />
         {error && (
           <p className="form-error" role="alert">

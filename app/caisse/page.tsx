@@ -34,6 +34,8 @@ interface CashSummary {
    * that happens to be empty — and the header now says which one it is.
    */
   businessDayOpen: boolean;
+  /** CASH-05: the float the last close left in the drawer, or null. */
+  suggestedOpeningCash?: string | null;
 }
 
 interface DashboardSummary {
@@ -366,7 +368,15 @@ export default function Caisse() {
         <CloseDayModal onClose={() => setCloseOpen(false)} onFinished={serviceClosed} />
       )}
       {openDayOpen && (
-        <OpenDayModal onClose={() => setOpenDayOpen(false)} onOpened={serviceOpened} />
+        <OpenDayModal
+          onClose={() => setOpenDayOpen(false)}
+          onOpened={serviceOpened}
+          suggestedOpeningCash={
+            cashQuery.state.status === "success"
+              ? cashQuery.state.data.suggestedOpeningCash
+              : undefined
+          }
+        />
       )}
     </Shell>
   );

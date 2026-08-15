@@ -255,14 +255,18 @@ describe("CASH-04: expected cash is one shared formula", () => {
     });
     const shown = (await getExpectedCash(pool, tenant.locationId, day.id)).expected;
 
-    const { closed } = await closeCurrentBusinessDay(context);
+    const { closed } = await closeCurrentBusinessDay(context, {
+      countedCashCents: 5_000,
+      nextOpeningCashCents: null,
+      varianceReason: null,
+    });
 
     // The regression this ticket exists for: the closing computed
     // `opening_cash + cash_revenue` and never read the movement ledger, so
     // it wrote 250,00 € against a drawer holding 50,00 € — and the cashier
     // was asked to justify a 200 € shortfall that was their own recorded
     // withdrawal.
-    expect(closed.closing_cash).toBe("50.00");
-    expect(closed.closing_cash).toBe(shown);
+    expect(closed.expected_cash).toBe("50.00");
+    expect(closed.expected_cash).toBe(shown);
   });
 });

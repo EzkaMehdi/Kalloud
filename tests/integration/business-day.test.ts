@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../lib/db";
 import { ConflictError, ValidationError } from "../../lib/errors";
-import { getActiveBusinessDay } from "../../lib/repositories/business-days";
+import { getActiveBusinessDay, getLastNextOpeningCash } from "../../lib/repositories/business-days";
 import { listCashMovements } from "../../lib/repositories/cash-movements";
 import { closeCurrentBusinessDay, openNewBusinessDay } from "../../lib/services/business-day";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
@@ -26,6 +26,18 @@ import type { RequestContext } from "../../lib/context";
 
 let tenant: TestTenant;
 let context: RequestContext;
+
+/**
+ * CASH-05 made the count part of closing. These CASH-02 tests are about what
+ * closing does *not* do, so they always count exactly what is expected: a
+ * variance would drag the threshold rule into assertions that are not about
+ * it.
+ */
+const countingExactly = (cents: number) => ({
+  countedCashCents: cents,
+  nextOpeningCashCents: null,
+  varianceReason: null,
+});
 
 beforeEach(async () => {
   await resetDatabase(pool);
@@ -139,7 +151,7 @@ describe("CASH-02: closing a service opens nothing", () => {
   it("leaves the establishment with no open business day at all", async () => {
     const opened = await openNewBusinessDay(context, 15_000); // 150.00 €
 
-    const { closed } = await closeCurrentBusinessDay(context);
+    const { closed } = await closeCurrentBusinessDay(context, countingExactly(15_000));
 
     expect(closed.id).toBe(opened.id);
     expect(closed.status).toBe("CLOSED");
@@ -149,7 +161,7 @@ describe("CASH-02: closing a service opens nothing", () => {
 
   it("records no opening float for a service nobody asked to open", async () => {
     await openNewBusinessDay(context, 15_000);
-    await closeCurrentBusinessDay(context);
+    await closeCurrentBusinessDay(context, countingExactly(15_000));
 
     // Exactly one OPENING movement: the one from the open above. The old
     // close inserted a second one ("Fond de caisse — nouvelle journée") for
@@ -165,10 +177,10 @@ describe("CASH-02: closing a service opens nothing", () => {
   it("closes on opening float + cash revenue, and audits it as a close", async () => {
     await openNewBusinessDay(context, 15_000);
 
-    const { closed } = await closeCurrentBusinessDay(context);
+    const { closed } = await closeCurrentBusinessDay(context, countingExactly(15_000));
 
     // No sales in this test, so the expected close is the float itself.
-    expect(closed.closing_cash).toBe("150.00");
+    expect(closed.expected_cash).toBe("150.00");
 
     const { rows } = await pool.query<{ action: string; target_id: string }>(
       "SELECT action, target_id FROM audit_events WHERE location_id = $1 ORDER BY id DESC LIMIT 1",
@@ -182,12 +194,14 @@ describe("CASH-02: closing a service opens nothing", () => {
   });
 
   it("refuses to close when no service is open", async () => {
-    await expect(closeCurrentBusinessDay(context)).rejects.toBeInstanceOf(ValidationError);
+    await expect(closeCurrentBusinessDay(context, countingExactly(15_000))).rejects.toBeInstanceOf(
+      ValidationError,
+    );
   });
 
   it("lets a new service be opened after a close — as a separate, deliberate call", async () => {
     const first = await openNewBusinessDay(context, 15_000);
-    await closeCurrentBusinessDay(context);
+    await closeCurrentBusinessDay(context, countingExactly(15_000));
 
     const second = await openNewBusinessDay(context, 5_000);
 
@@ -198,11 +212,120 @@ describe("CASH-02: closing a service opens nothing", () => {
 
   it("keeps a closed day closed: closing twice is refused, not repeated", async () => {
     await openNewBusinessDay(context, 15_000);
-    await closeCurrentBusinessDay(context);
+    await closeCurrentBusinessDay(context, countingExactly(15_000));
 
     // DEC-04: a closed day is final and there is no reopen path, so the
     // second attempt has nothing to act on. (Two *concurrent* closes racing
     // each other are CASH-06's problem, not this one.)
-    await expect(closeCurrentBusinessDay(context)).rejects.toBeInstanceOf(ValidationError);
+    await expect(closeCurrentBusinessDay(context, countingExactly(15_000))).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+  });
+});
+
+/**
+ * CASH-05/DEC-04. The count is what turns a close from "freeze a calculated
+ * figure" into a reconciliation: someone states what is physically in the
+ * drawer, the difference is recorded, and beyond the establishment's
+ * threshold it has to be explained.
+ *
+ * The default `cash_discrepancy_threshold` is 5,00 € (CFG-00), which is what
+ * the amounts below are chosen around.
+ */
+describe("CASH-05: counting the drawer and explaining the variance", () => {
+  it("stores the count, the variance, the reason, the next float, the author and the time", async () => {
+    await openNewBusinessDay(context, 15_000); // attendu : 150,00 €
+
+    const { closed } = await closeCurrentBusinessDay(context, {
+      countedCashCents: 14_200, // 8,00 € de moins
+      nextOpeningCashCents: 10_000,
+      varianceReason: "Erreur de rendu de monnaie",
+    });
+
+    expect(closed.expected_cash).toBe("150.00");
+    expect(closed.counted_cash).toBe("142.00");
+    // Generated by the database from the two amounts above, never written by
+    // the application — so it cannot drift from its own inputs.
+    expect(closed.cash_variance).toBe("-8.00");
+    expect(closed.variance_reason).toBe("Erreur de rendu de monnaie");
+    expect(closed.next_opening_cash).toBe("100.00");
+    // "Auteur et horodatage conservés" (acceptance).
+    expect(closed.closed_by).toBe(context.userId);
+    expect(closed.closed_at).not.toBeNull();
+  });
+
+  it("refuses a variance beyond the threshold when no reason is given", async () => {
+    await openNewBusinessDay(context, 15_000);
+
+    await expect(
+      closeCurrentBusinessDay(context, {
+        countedCashCents: 14_000, // 10,00 € d'écart, seuil 5,00 €
+        nextOpeningCashCents: null,
+        varianceReason: null,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    // Refused, not partially applied: the service is still open.
+    expect(await getActiveBusinessDay(pool, tenant.locationId)).not.toBeNull();
+  });
+
+  it("treats a surplus exactly like a shortfall", async () => {
+    await openNewBusinessDay(context, 15_000);
+
+    // 20,00 € de trop. Instinct says only a shortfall is suspicious; a
+    // drawer that is over is just as much an anomaly, and DEC-05 does not
+    // distinguish them.
+    await expect(
+      closeCurrentBusinessDay(context, {
+        countedCashCents: 17_000,
+        nextOpeningCashCents: null,
+        varianceReason: null,
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    const { closed } = await closeCurrentBusinessDay(context, {
+      countedCashCents: 17_000,
+      nextOpeningCashCents: null,
+      varianceReason: "Caisse trouvée excédentaire, à investiguer",
+    });
+    expect(closed.cash_variance).toBe("20.00");
+  });
+
+  it("asks for nothing when the variance stays within the threshold", async () => {
+    await openNewBusinessDay(context, 15_000);
+
+    // 3,00 € d'écart, sous le seuil de 5,00 €.
+    const { closed } = await closeCurrentBusinessDay(context, {
+      countedCashCents: 14_700,
+      nextOpeningCashCents: null,
+      varianceReason: null,
+    });
+
+    expect(closed.cash_variance).toBe("-3.00");
+    expect(closed.variance_reason).toBeNull();
+  });
+
+  it("offers the float the last close left, for the next opening", async () => {
+    await openNewBusinessDay(context, 15_000);
+    await closeCurrentBusinessDay(context, {
+      countedCashCents: 15_000,
+      nextOpeningCashCents: 8_000,
+      varianceReason: null,
+    });
+
+    // Recorded only (DEC-04): nothing was opened by stating it.
+    expect(await getActiveBusinessDay(pool, tenant.locationId)).toBeNull();
+    expect(await getLastNextOpeningCash(pool, tenant.locationId)).toBe("80.00");
+  });
+
+  it("has nothing to offer when the last close stated no float", async () => {
+    expect(await getLastNextOpeningCash(pool, tenant.locationId)).toBeNull();
+
+    await openNewBusinessDay(context, 15_000);
+    await closeCurrentBusinessDay(context, countingExactly(15_000));
+
+    // A close that named no next float proposes none, rather than quoting
+    // the counted amount as if it had been decided.
+    expect(await getLastNextOpeningCash(pool, tenant.locationId)).toBeNull();
   });
 });

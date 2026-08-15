@@ -16,7 +16,9 @@ import { hashPassword } from "../../lib/auth/password";
 
 const PASSWORD = "Password123!";
 
-test.describe("CASH-03: a cash movement carries its category", () => {
+// Shared throwaway establishment, mutated by both tests: order declared, not
+// inherited from `fullyParallel` (which parallelises within a file too).
+test.describe.serial("CASH-03: a cash movement carries its category", () => {
   let pool: Pool;
   let organizationId: number;
   let locationId: number;
@@ -119,7 +121,13 @@ test.describe("CASH-03: a cash movement carries its category", () => {
     // itself rather than depending on having run before the one above.
     // Closing is idempotent enough here: with nothing open the API refuses,
     // which is the state we want anyway.
-    await page.request.post("/api/business-day/close");
+    // CASH-05: closing carries the count, and a variance beyond the
+    // threshold needs a reason. The previous test's withdrawal makes this
+    // close a large one; the amounts are irrelevant here — what this test
+    // needs is the resulting state, "no service open".
+    await page.request.post("/api/business-day/close", {
+      data: { countedCash: "200.00", varianceReason: "Clôture de test" },
+    });
     await page.reload();
 
     // No service open: the API refuses the movement by name (CASH-01). The

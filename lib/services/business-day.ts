@@ -1,7 +1,8 @@
 import { withTransaction } from "../db";
 import { ConflictError, isUniqueViolation, ValidationError } from "../errors";
 import { recordAuditEvent } from "../audit";
-import { fromCents } from "../money";
+import { fromCents, toCents } from "../money";
+import { getLocationSettings } from "../repositories/settings";
 import {
   type BusinessDayRow,
   closeBusinessDay,
@@ -82,6 +83,18 @@ export interface CloseBusinessDayResult {
 }
 
 /**
+ * CASH-05. Amounts arrive in integer cents (the schema's `moneyAmountSchema`
+ * transform), because the variance is compared against a configured
+ * threshold and a centime of floating-point drift here is a centime the
+ * cashier is asked to account for (DEC-05).
+ */
+export interface CloseBusinessDayInput {
+  countedCashCents: number;
+  nextOpeningCashCents: number | null;
+  varianceReason: string | null;
+}
+
+/**
  * CASH-02: closes the active service, and nothing else. This replaces
  * `closeAndReopenBusinessDay`, which closed the day *and* opened the next
  * one in the same call — DEC-04 rules that out explicitly ("une nouvelle
@@ -106,6 +119,7 @@ export interface CloseBusinessDayResult {
  */
 export async function closeCurrentBusinessDay(
   context: RequestContext,
+  input: CloseBusinessDayInput,
 ): Promise<CloseBusinessDayResult> {
   return withTransaction(async (client) => {
     const activeDay = await getActiveBusinessDay(client, context.locationId);
@@ -118,12 +132,32 @@ export async function closeCurrentBusinessDay(
     // adding these values as JS binary floats — a centime off here is a
     // centime the cashier is asked to justify (DEC-05).
     const expectedCash = await getExpectedCash(client, context.locationId, activeDay.id);
-    const closed = await closeBusinessDay(
-      client,
-      context.locationId,
-      activeDay.id,
-      expectedCash.expected,
-    );
+
+    // CASH-05/DEC-04: a variance beyond the establishment's configured
+    // threshold (CFG-00) must be explained. Compared in integer cents and on
+    // the absolute value — a drawer 20 € over is as much an anomaly as one
+    // 20 € short, and only one of the two is anyone's instinct to question.
+    const varianceCents = input.countedCashCents - toCents(expectedCash.expected);
+    const settings = await getLocationSettings(client, context.locationId);
+    const thresholdCents = Math.round(settings.cashDiscrepancyThreshold * 100);
+    const reason = input.varianceReason?.trim() || null;
+    if (Math.abs(varianceCents) > thresholdCents && !reason) {
+      throw new ValidationError(
+        `L'écart de ${fromCents(varianceCents)} € dépasse le seuil de ${fromCents(thresholdCents)} € : indiquez un motif.`,
+        { details: [{ field: "varianceReason", message: "Justification obligatoire." }] },
+      );
+    }
+
+    const closed = await closeBusinessDay(client, context.locationId, activeDay.id, {
+      expectedCash: expectedCash.expected,
+      countedCash: fromCents(input.countedCashCents),
+      varianceReason: reason,
+      nextOpeningCash:
+        input.nextOpeningCashCents === null ? null : fromCents(input.nextOpeningCashCents),
+      // "Auteur et horodatage conservés" (acceptance): `closed_at` is set by
+      // the database in the same statement.
+      closedBy: context.userId,
+    });
 
     await recordAuditEvent(client, {
       locationId: context.locationId,
@@ -132,7 +166,17 @@ export async function closeCurrentBusinessDay(
       targetType: "business_day",
       targetId: activeDay.id,
       before: { status: activeDay.status },
-      after: { status: closed.status, closingCash: expectedCash.expected, expectedCash, summary },
+      after: {
+        status: closed.status,
+        expectedCash,
+        countedCash: closed.counted_cash,
+        // Read back from the row rather than recomputed: the database
+        // generates it, so this is the figure that was actually stored.
+        cashVariance: closed.cash_variance,
+        varianceReason: closed.variance_reason,
+        nextOpeningCash: closed.next_opening_cash,
+        summary,
+      },
     });
 
     return { closed: { ...closed, summary } };

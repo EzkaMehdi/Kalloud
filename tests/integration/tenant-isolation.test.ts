@@ -197,7 +197,13 @@ describe("SEC-08: cash and business-day isolation", () => {
     const dayB = await openBusinessDay(pool, tenantB.locationId, "200.00");
 
     await expect(
-      closeBusinessDay(pool, tenantA.locationId, dayB.id, "500.00"),
+      closeBusinessDay(pool, tenantA.locationId, dayB.id, {
+        expectedCash: "500.00",
+        countedCash: "500.00",
+        varianceReason: null,
+        nextOpeningCash: null,
+        closedBy: contextA.userId,
+      }),
     ).rejects.toBeInstanceOf(NotFoundError);
 
     const stillOpen = await getActiveBusinessDay(pool, tenantB.locationId);

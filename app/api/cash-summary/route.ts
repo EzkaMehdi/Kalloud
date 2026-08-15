@@ -1,7 +1,7 @@
 import { requireRequestContext } from "@/lib/context";
 import { pool } from "@/lib/db";
 import { apiRoute, jsonOk } from "@/lib/http";
-import { getActiveBusinessDay } from "@/lib/repositories/business-days";
+import { getActiveBusinessDay, getLastNextOpeningCash } from "@/lib/repositories/business-days";
 import { getExpectedCash } from "@/lib/repositories/cash-movements";
 
 export const GET = apiRoute(async () => {
@@ -12,7 +12,17 @@ export const GET = apiRoute(async () => {
     // zero balance — indistinguishable from an establishment that simply
     // never opened a day. `businessDayOpen` tells the two apart; CASH-02
     // is what made the caisse screen act on it.
-    return jsonOk({ balance: "0.00", businessDayOpen: false });
+    //
+    // CASH-05: `suggestedOpeningCash` is the float the last close said it
+    // was leaving in the drawer. Null when there is none to quote — a fresh
+    // establishment, or a day closed before CASH-05 — in which case the
+    // opening form starts empty rather than proposing a figure nobody
+    // stated.
+    return jsonOk({
+      balance: "0.00",
+      businessDayOpen: false,
+      suggestedOpeningCash: await getLastNextOpeningCash(pool, context.locationId),
+    });
   }
 
   // CASH-04: the same function the closing uses, so the figure a cashier

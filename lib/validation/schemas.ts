@@ -281,10 +281,35 @@ export const createCashMovementSchema = z
   .transform(({ amount, ...rest }) => ({ ...rest, amountCents: amount }));
 export type CreateCashMovementBody = z.infer<typeof createCashMovementSchema>;
 
-// CASH-02: closing takes no payload at all any more. `nextOpeningCash` only
-// existed to feed the reopen half of the old combined action, which DEC-04
-// removed; the fund of the *next* service is now stated when that service is
-// explicitly opened, through `openBusinessDaySchema` below.
+/**
+ * CASH-05: closing is a reconciliation, so it carries the count.
+ *
+ * `countedCash` is required — "montant vide ou invalide refusé" is the
+ * acceptance criterion, and a default of any kind would let a service close
+ * on a number nobody counted. Zero is accepted: an emptied drawer is a real
+ * answer, an unstated one is not.
+ *
+ * `nextOpeningCash` is the float deliberately left for tomorrow. It is
+ * recorded and pre-fills the next opening; it does not open anything
+ * (DEC-04/CASH-02). `varianceReason` becomes mandatory beyond the
+ * establishment's threshold — enforced in the service, which is where the
+ * threshold (CFG-00) and the computed variance both live.
+ */
+export const closeBusinessDaySchema = z
+  .strictObject({
+    countedCash: moneyAmountSchema,
+    nextOpeningCash: moneyAmountSchema.optional(),
+    varianceReason: reasonSchema.optional(),
+  })
+  .transform(({ countedCash, nextOpeningCash, varianceReason }) => ({
+    countedCashCents: countedCash,
+    nextOpeningCashCents: nextOpeningCash ?? null,
+    varianceReason: varianceReason ?? null,
+  }));
+export type CloseBusinessDayBody = z.infer<typeof closeBusinessDaySchema>;
+
+// CASH-02: the fund of a service is stated when that service is explicitly
+// opened, never as a side effect of closing the previous one.
 export const openBusinessDaySchema = z.strictObject({
   openingCash: moneyAmountSchema.optional(),
 });

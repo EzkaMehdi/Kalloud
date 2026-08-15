@@ -23,7 +23,11 @@ import { hashPassword } from "../../lib/auth/password";
 
 const PASSWORD = "Password123!";
 
-test.describe("CASH-02: opening and closing are two deliberate acts", () => {
+// The tests below share one throwaway establishment and each mutate its
+// business-day state, so their order is declared rather than left to
+// `fullyParallel` — which parallelises tests within a file, not just across
+// files. Same precedent as tests/e2e/idempotency.spec.ts.
+test.describe.serial("CASH-02: opening and closing are two deliberate acts", () => {
   let pool: Pool;
   let organizationId: number;
   let email: string;
@@ -116,9 +120,11 @@ test.describe("CASH-02: opening and closing are two deliberate acts", () => {
     await page.getByRole("button", { name: /compter et clôturer la caisse/i }).click();
     const closeDialog = page.getByRole("dialog");
     await expect(closeDialog).toBeVisible();
-    // The dialog no longer asks for the next service's float, because it no
-    // longer starts one.
-    await expect(closeDialog.getByLabel(/fond de caisse/i)).toHaveCount(0);
+    // CASH-05: the count is what closing asks for now. The float offered to
+    // the *next* service is optional and, crucially, opens nothing — left
+    // blank here precisely so the assertions below cannot be satisfied by a
+    // service this dialog started.
+    await closeDialog.getByLabel(/espèces comptées/i).fill("120");
     await closeDialog.getByRole("button", { name: /compter et clôturer la caisse/i }).click();
 
     // Acceptance, verbatim: "aucune nouvelle journée ouverte implicitement

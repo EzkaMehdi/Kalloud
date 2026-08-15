@@ -19,6 +19,7 @@ import {
 import {
   cancelTicketSchema,
   checkoutBodySchema,
+  closeBusinessDaySchema,
   createCashMovementSchema,
   createProductSchema,
   dashboardQuerySchema,
@@ -373,6 +374,37 @@ describe("API-01: catalog, floor plan and cash payloads", () => {
     // would let every movement be filed as uncategorised without anyone
     // choosing that.
     expect(accepts(createCashMovementSchema, { ...base, type: "OUT" })).toBe(false);
+  });
+
+  /**
+   * CASH-05: "montant vide ou invalide refusé". The count is the one field
+   * that must never have a default — a service closing on a figure nobody
+   * stated is exactly the reconciliation this ticket exists to prevent.
+   */
+  it("refuses to close a service on an unstated or malformed count", () => {
+    expect(
+      closeBusinessDaySchema.parse({ countedCash: "142.00", varianceReason: "Rendu de monnaie" }),
+    ).toEqual({
+      countedCashCents: 14_200,
+      nextOpeningCashCents: null,
+      varianceReason: "Rendu de monnaie",
+    });
+
+    // An emptied drawer is a real answer; an unstated one is not.
+    expect(accepts(closeBusinessDaySchema, { countedCash: "0.00" })).toBe(true);
+    expect(accepts(closeBusinessDaySchema, {})).toBe(false);
+    expect(accepts(closeBusinessDaySchema, { countedCash: "" })).toBe(false);
+    expect(accepts(closeBusinessDaySchema, { countedCash: "abc" })).toBe(false);
+    expect(accepts(closeBusinessDaySchema, { countedCash: "-10.00" })).toBe(false);
+    // DEC-05: two decimals, and a third is a typo rather than a precision.
+    expect(accepts(closeBusinessDaySchema, { countedCash: "10.999" })).toBe(false);
+
+    // The next float is optional — a close that names none simply proposes
+    // none at the next opening.
+    expect(accepts(closeBusinessDaySchema, { countedCash: "10.00" })).toBe(true);
+    expect(
+      accepts(closeBusinessDaySchema, { countedCash: "10.00", nextOpeningCash: "-1.00" }),
+    ).toBe(false);
   });
 
   it("defaults the dashboard period but rejects an unknown one", () => {

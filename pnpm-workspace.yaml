@@ -2,12 +2,19 @@ allowBuilds:
   unrs-resolver: false
 onlyBuiltDependencies:
   - unrs-resolver
-# GHSA-2v37-7h3g-55p8: nanoid <3.3.17 can loop indefinitely in a custom
+# GHSA-2v37-7h3g-55p8: nanoid <3.3.18 can loop indefinitely in a custom
 # generator called with size 0. Not called that way anywhere in this
 # app's own code — pulled in transitively, twice independently, by
 # postcss (via next and via vite/vitest), each resolving its own copy.
 # `pnpm update nanoid` alone only bumped one of the two; this forces
 # every resolution to the patched version regardless of which parent
 # declared it.
+#
+# The advisory's range was widened twice (<3.3.17, then <3.3.18), so the
+# floor moved with it. The ceiling is the important half: an unbounded
+# `>=3.3.18` lets `pnpm update` resolve nanoid 6, which is a major the
+# only consumer here does not ask for — postcss declares `^3.3.16`. That
+# build happened to pass, which is precisely why the bound is written
+# down rather than left to luck.
 overrides:
-  nanoid: ">=3.3.17"
+  nanoid: "^3.3.18"

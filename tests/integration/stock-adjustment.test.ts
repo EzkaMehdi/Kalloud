@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { pool } from "../../lib/db";
 import { NotFoundError, ValidationError } from "../../lib/errors";
 import { createProduct, listProducts, type ProductRow } from "../../lib/repositories/products";
+import { MANUAL_STOCK_MOVEMENT_TYPES } from "../../lib/validation/primitives";
 import { createProductWithInitialStock } from "../../lib/services/products";
 import {
   getStockBalanceFromLedger,
@@ -184,5 +185,70 @@ describe("STK-04: adjusting stock by a delta", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].before_data.stockQuantity).toBe(10);
     expect(rows[0].after_data).toMatchObject({ delta: -2, type: "LOSS", stockQuantity: 8 });
+  });
+});
+
+/**
+ * STK-06's acceptance criterion, verbatim: "chaque opération produit un
+ * mouvement signé, motivé et attribué."
+ *
+ * The four operations themselves arrived with the service (STK-04) and its
+ * dialog (STK-05) rather than with this ticket — DEC-06's table assigns
+ * their trigger here, but a service that took a type and a dialog that
+ * offered the list delivered them early. What this closes is the proof: the
+ * criterion says *each*, and `RETURN` had no runtime coverage at all
+ * (tests/unit/validation.test.ts exercised the schema, nothing exercised the
+ * write).
+ *
+ * Table-driven on purpose: a fifth operation added to
+ * `MANUAL_STOCK_MOVEMENT_TYPES` without a row here is a visible omission,
+ * where four hand-written tests would simply stay silent about it.
+ */
+describe("STK-06: the four MVP stock operations", () => {
+  const operations = [
+    { type: "RECEIPT" as const, delta: 6, reason: "Livraison du mardi", expected: 16 },
+    { type: "RETURN" as const, delta: 2, reason: "Retour client", expected: 12 },
+    { type: "LOSS" as const, delta: -3, reason: "Verre cassé", expected: 7 },
+    {
+      type: "CORRECTION" as const,
+      delta: -4,
+      reason: "Écart constaté à l'inventaire",
+      expected: 6,
+    },
+  ];
+
+  it.each(operations)(
+    "records $type as a signed, motivated, attributed movement",
+    async ({ type, delta, reason, expected }) => {
+      const { movement, balance } = await adjustProductStock(context, coffee.id, {
+        delta,
+        type,
+        reason,
+      });
+
+      // Signed: the direction is the one migrations/0007 pins to this type,
+      // so a RECEIPT can only ever add and a LOSS can only ever remove.
+      expect(movement.quantity).toBe(delta);
+      expect(Math.sign(movement.quantity)).toBe(Math.sign(delta));
+      // Motivated, and in the operator's own words rather than a fixed
+      // string the screen supplied for them (the prompt's failing, STK-05).
+      expect(movement.reason).toBe(reason);
+      // Attributed.
+      expect(movement.created_by).toBe(context.userId);
+      expect(movement.type).toBe(type);
+
+      // And the balance it claims is the one the ledger reconstructs.
+      expect(balance).toBe(expected);
+      expect(await getStockBalanceFromLedger(pool, tenant.locationId, coffee.id)).toBe(expected);
+    },
+  );
+
+  it("covers every operation the interface offers", () => {
+    // The guard that keeps the table above honest: MANUAL_STOCK_MOVEMENT_TYPES
+    // is what the dialog renders, so anything in it that is missing here is
+    // an operation a user can perform and no test has ever performed.
+    expect([...MANUAL_STOCK_MOVEMENT_TYPES].sort()).toEqual(
+      operations.map((operation) => operation.type).sort(),
+    );
   });
 });

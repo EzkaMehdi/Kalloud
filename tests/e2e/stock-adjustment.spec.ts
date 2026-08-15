@@ -61,6 +61,15 @@ async function createProduct(
   return response.json();
 }
 
+/**
+ * The page's own notice. Scoped by class rather than by role alone:
+ * AsyncSection's loading state is also a `role="status"` live region, so
+ * `getByRole("status")` matches two elements while the list is refetching.
+ */
+function noticeOf(page: Page) {
+  return page.locator("div.status[role='status']");
+}
+
 /** The row's badge doubles as its adjust button ("En stock · +"). */
 function rowOf(page: Page, product: CreatedProduct) {
   return page.locator(".stock-row").filter({ hasText: product.name });
@@ -89,7 +98,7 @@ test.describe("STK-05: adjusting stock through a real form", () => {
     await dialog.getByRole("button", { name: /enregistrer le mouvement/i }).click();
 
     await expect(dialog).toHaveCount(0);
-    await expect(page.getByRole("status")).toContainText("Perte ou casse");
+    await expect(noticeOf(page)).toContainText("Perte ou casse");
     await expect(rowOf(page, product)).toContainText("9 unités");
 
     // That the type and motive reach the ledger is asserted where the ledger
@@ -171,5 +180,60 @@ test.describe("STK-05: adjusting stock through a real form", () => {
     await expect(rowOf(page, product)).toContainText("2 unités");
 
     await expectNoNativePrompt(page);
+  });
+});
+
+/**
+ * STK-06: the four operations DEC-06 defines are reachable from the screen,
+ * not merely from the API. `RETURN` is the one the dialog had never been
+ * driven to produce — the others are exercised by the tests above — and it
+ * is also the one whose direction is least obvious from its name, so the
+ * balance assertion is what makes "signed correctly" visible.
+ */
+test.describe("STK-06: every MVP operation is reachable from the screen", () => {
+  test("records a customer return, which adds to the balance", async ({ page }) => {
+    await login(page.request);
+    const product = await createProduct(page.request, 5);
+
+    await page.goto("/stock");
+    await rowOf(page, product).getByRole("button").click();
+    const dialog = page.getByRole("dialog");
+
+    await dialog.getByLabel(/type de mouvement/i).selectOption("RETURN");
+    await dialog.getByLabel(/quantité/i).fill("2");
+    // A return comes *in*, like a receipt — stated by the type, never typed
+    // as a sign by the user (DEC-06).
+    await expect(dialog).toContainText("Nouveau solde : 7 unités");
+    await dialog.getByLabel(/motif/i).fill("Retour client, article non ouvert");
+    await dialog.getByRole("button", { name: /enregistrer le mouvement/i }).click();
+
+    await expect(dialog).toHaveCount(0);
+    await expect(noticeOf(page)).toContainText("Retour");
+    await expect(rowOf(page, product)).toContainText("7 unités");
+    await expectNoNativePrompt(page);
+  });
+
+  test("offers exactly the four operations, and no system-only one", async ({ page }) => {
+    await login(page.request);
+    await createProduct(page.request, 3);
+
+    await page.goto("/stock");
+    await page.getByRole("button", { name: /^recharger$/i }).click();
+    const options = await page
+      .getByRole("dialog")
+      .getByLabel(/type de mouvement/i)
+      .locator("option")
+      .allTextContents();
+
+    expect(options).toEqual([
+      "Réception de marchandise",
+      "Correction d'écart",
+      "Perte ou casse",
+      "Retour",
+    ]);
+    // SALE and OPENING_BALANCE belong to the checkout and to product
+    // creation; offering either here would let a user forge a sale's stock
+    // effect without a sale.
+    expect(options.join(" ")).not.toMatch(/vente|ouverture/i);
   });
 });

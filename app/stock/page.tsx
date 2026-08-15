@@ -1,10 +1,11 @@
 "use client";
 
-import { PackagePlus, Search } from "lucide-react";
+import { ClipboardCheck, PackagePlus, Search } from "lucide-react";
 import { useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
 import { Shell } from "@/components/shell";
 import { StockAdjustModal } from "@/components/stock-adjust-modal";
+import { StockCountModal } from "@/components/stock-count-modal";
 import { apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 import { can } from "@/lib/authz";
@@ -32,6 +33,8 @@ export default function Stock() {
    * action and must ask which product first.
    */
   const [adjusting, setAdjusting] = useState<Product | "any" | null>(null);
+  /** STK-07: the physical count, which states the shelf rather than a delta. */
+  const [counting, setCounting] = useState<Product | null>(null);
 
   function adjusted(message: string) {
     productsQuery.refetch();
@@ -128,13 +131,23 @@ export default function Stock() {
                         <div className="stock-value">
                           <b>{product.stock_quantity} unités</b>
                           {canAdjustStock ? (
-                            <button
-                              onClick={() => setAdjusting(product)}
-                              className={`stock-alert ${state}`}
-                              aria-label={`${label}, ${product.stock_quantity} unités. Ajouter du stock pour ${product.name}`}
-                            >
-                              {label} · +
-                            </button>
+                            <>
+                              <button
+                                onClick={() => setCounting(product)}
+                                className="soft-button"
+                                aria-label={`Compter ${product.name}`}
+                              >
+                                <ClipboardCheck size={15} aria-hidden="true" />
+                                Compter
+                              </button>
+                              <button
+                                onClick={() => setAdjusting(product)}
+                                className={`stock-alert ${state}`}
+                                aria-label={`${label}, ${product.stock_quantity} unités. Ajouter du stock pour ${product.name}`}
+                              >
+                                {label} · +
+                              </button>
+                            </>
                           ) : (
                             <span className={`stock-alert ${state}`}>{label}</span>
                           )}
@@ -155,6 +168,13 @@ export default function Stock() {
           products={productsQuery.state.data}
           onClose={() => setAdjusting(null)}
           onAdjusted={adjusted}
+        />
+      )}
+      {counting && (
+        <StockCountModal
+          product={counting}
+          onClose={() => setCounting(null)}
+          onCounted={adjusted}
         />
       )}
     </Shell>

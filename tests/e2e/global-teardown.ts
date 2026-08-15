@@ -68,6 +68,13 @@ export default async function globalTeardown(): Promise<void> {
       [TEST_TABLE_PATTERNS],
     );
 
+    // STK-07: counts reference the correction they produced
+    // (`stock_counts.movement_id`), so they come out before the movements do
+    // — the same children-first unwinding the orders above need.
+    await pool.query(
+      "DELETE FROM stock_counts WHERE product_id IN (SELECT id FROM products WHERE name LIKE $1)",
+      [TEST_PRODUCT_PATTERN],
+    );
     await pool.query(
       "DELETE FROM stock_movements WHERE product_id IN (SELECT id FROM products WHERE name LIKE $1)",
       [TEST_PRODUCT_PATTERN],

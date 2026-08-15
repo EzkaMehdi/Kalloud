@@ -70,9 +70,17 @@ function noticeOf(page: Page) {
   return page.locator("div.status[role='status']");
 }
 
-/** The row's badge doubles as its adjust button ("En stock · +"). */
 function rowOf(page: Page, product: CreatedProduct) {
   return page.locator(".stock-row").filter({ hasText: product.name });
+}
+
+/**
+ * The row's badge doubles as its adjust button ("En stock · +"), and since
+ * STK-07 it sits next to a "Compter" one — so the button is named rather
+ * than taken as "the row's button".
+ */
+function adjustButtonOf(page: Page, product: CreatedProduct) {
+  return rowOf(page, product).getByRole("button", { name: /ajouter du stock/i });
 }
 
 test.describe("STK-05: adjusting stock through a real form", () => {
@@ -81,7 +89,7 @@ test.describe("STK-05: adjusting stock through a real form", () => {
     const product = await createProduct(page.request, 12);
 
     await page.goto("/stock");
-    await rowOf(page, product).getByRole("button").click();
+    await adjustButtonOf(page, product).click();
 
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
@@ -139,7 +147,7 @@ test.describe("STK-05: adjusting stock through a real form", () => {
     const product = await createProduct(page.request, 8);
 
     await page.goto("/stock");
-    await rowOf(page, product).getByRole("button").click();
+    await adjustButtonOf(page, product).click();
     const dialog = page.getByRole("dialog");
 
     // Absent for a receipt: the type already states the direction (DEC-06).
@@ -161,7 +169,7 @@ test.describe("STK-05: adjusting stock through a real form", () => {
     const product = await createProduct(page.request, 2);
 
     await page.goto("/stock");
-    await rowOf(page, product).getByRole("button").click();
+    await adjustButtonOf(page, product).click();
     const dialog = page.getByRole("dialog");
 
     // A loss larger than the balance: refused server-side (DEC-06), because
@@ -196,7 +204,7 @@ test.describe("STK-06: every MVP operation is reachable from the screen", () => 
     const product = await createProduct(page.request, 5);
 
     await page.goto("/stock");
-    await rowOf(page, product).getByRole("button").click();
+    await adjustButtonOf(page, product).click();
     const dialog = page.getByRole("dialog");
 
     await dialog.getByLabel(/type de mouvement/i).selectOption("RETURN");

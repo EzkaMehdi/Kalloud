@@ -196,6 +196,20 @@ export const adjustStockSchema = z
   );
 export type AdjustStockBody = z.infer<typeof adjustStockSchema>;
 
+/**
+ * STK-07: a physical count states what is on the shelf, so it is an absolute
+ * quantity — the one place an absolute number is the honest input, unlike
+ * the adjustment above. Zero is legitimate (an empty shelf is a count), and
+ * the note is optional: the écart the system computes is the justification,
+ * and demanding a sentence for a count that matched would be asking someone
+ * to explain that nothing was wrong.
+ */
+export const recordStockCountSchema = z.strictObject({
+  countedQuantity: stockQuantitySchema,
+  note: shortTextSchema(255, "La note").optional(),
+});
+export type RecordStockCountBody = z.infer<typeof recordStockCountSchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Floor plan                                                                 */
 /* -------------------------------------------------------------------------- */

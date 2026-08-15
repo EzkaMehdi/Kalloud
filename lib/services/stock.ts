@@ -1,6 +1,11 @@
 import { recordAuditEvent } from "../audit";
 import { NotFoundError, ValidationError } from "../errors";
 import { lockActiveProductForStockOperation } from "../repositories/products";
+import {
+  attachMovementToStockCount,
+  createStockCount,
+  type StockCountRow,
+} from "../repositories/stock-counts";
 import { recordStockMovement, type StockMovementType } from "../repositories/stock-movements";
 import { withTransaction, type Queryable } from "../db";
 import type { ManualStockMovementType } from "../validation/primitives";
@@ -74,6 +79,89 @@ export async function adjustProductStock(
     });
 
     return { movement, balance };
+  });
+}
+
+export interface StockCountResult {
+  count: StockCountRow;
+  balance: number;
+}
+
+/**
+ * STK-07/DEC-06: a physical count. The user states what they actually
+ * counted; the system works out the rest.
+ *
+ * The theoretical balance is read under the row lock the correction is
+ * written with, not before it — otherwise a sale settling mid-count would
+ * make the recorded "stock avant" a figure that was already false when it
+ * was written down, and the écart would blame the counter for someone
+ * else's transaction.
+ *
+ * A count that matches records no movement: `quantity <> 0` forbids an
+ * empty one, and inventing a zero-quantity `CORRECTION` to have something
+ * to point at would put a line in the ledger describing an event that did
+ * not happen. The count row is the trace in that case — which is why it
+ * exists as its own table (migrations/0018).
+ *
+ * The correction is deliberately typed `CORRECTION` whatever the direction:
+ * it is the one movement type DEC-06 allows either way, and the one whose
+ * meaning is "the ledger was wrong, here is the catch-up".
+ */
+export async function recordStockCount(
+  context: RequestContext,
+  productId: number,
+  countedQuantity: number,
+  note: string | null,
+): Promise<StockCountResult> {
+  return withTransaction(async (client) => {
+    const product = await lockActiveProductForStockOperation(client, context.locationId, productId);
+    if (!product) {
+      throw new NotFoundError("Produit introuvable.");
+    }
+
+    const theoretical = product.stockQuantity;
+    const difference = countedQuantity - theoretical;
+    let count = await createStockCount(client, context.locationId, {
+      productId,
+      theoreticalQuantity: theoretical,
+      countedQuantity,
+      note,
+      createdBy: context.userId,
+    });
+
+    let balance = theoretical;
+    if (difference !== 0) {
+      const applied = await recordStockMovement(client, context.locationId, {
+        productId,
+        quantity: difference,
+        type: "CORRECTION",
+        reason: note?.trim()
+          ? `Inventaire : ${note.trim()}`
+          : `Inventaire : ${theoretical} théorique, ${countedQuantity} compté`,
+        createdBy: context.userId,
+        referenceType: "stock_count",
+        referenceId: String(count.id),
+      });
+      balance = applied.balance;
+      count = await attachMovementToStockCount(
+        client,
+        context.locationId,
+        count.id,
+        applied.movement.id,
+      );
+    }
+
+    await recordAuditEvent(client, {
+      locationId: context.locationId,
+      actorUserId: context.userId,
+      action: "stock.count",
+      targetType: "product",
+      targetId: productId,
+      before: { stockQuantity: theoretical },
+      after: { counted: countedQuantity, difference, stockQuantity: balance },
+    });
+
+    return { count, balance };
   });
 }
 

@@ -37,9 +37,25 @@ export default function Stock() {
    * from that row, and `"any"` means it was opened from the page-level
    * action and must ask which product first.
    */
-  const [adjusting, setAdjusting] = useState<Product | "any" | null>(null);
+  const [adjustingId, setAdjustingId] = useState<number | "any" | null>(null);
   /** STK-07: the physical count, which states the shelf rather than a delta. */
-  const [counting, setCounting] = useState<Product | null>(null);
+  const [countingId, setCountingId] = useState<number | null>(null);
+
+  /**
+   * STK-08: the open dialog looks its product up in the current list on every
+   * render, instead of holding the copy that existed when it was opened.
+   *
+   * Storing the object froze it: once the list re-read itself (a focus
+   * revalidation, another tab's count), the row behind the dialog updated
+   * while the dialog kept showing the balance it had captured — so the
+   * "stock théorique" a user counted against could be stale until they
+   * closed and reopened it. The server was never fooled, since it re-reads
+   * the balance under lock (STK-07), but the figure on screen was.
+   */
+  const products = productsQuery.state.status === "success" ? productsQuery.state.data : [];
+  const adjusting =
+    adjustingId === "any" ? "any" : (products.find((item) => item.id === adjustingId) ?? null);
+  const counting = products.find((item) => item.id === countingId) ?? null;
 
   function adjusted(message: string) {
     productsQuery.refetch();
@@ -61,7 +77,7 @@ export default function Stock() {
             criterion ("mène à un vrai parcours") is about giving it back its
             meaning, so it opens the same dialog and asks which product. */}
         {canAdjustStock && (
-          <button className="soft-button" onClick={() => setAdjusting("any")}>
+          <button className="soft-button" onClick={() => setAdjustingId("any")}>
             <PackagePlus size={18} aria-hidden="true" />
             Recharger
           </button>
@@ -148,7 +164,7 @@ export default function Stock() {
                           {canAdjustStock ? (
                             <>
                               <button
-                                onClick={() => setCounting(product)}
+                                onClick={() => setCountingId(product.id)}
                                 className="soft-button"
                                 aria-label={`Compter ${product.name}`}
                               >
@@ -156,7 +172,7 @@ export default function Stock() {
                                 Compter
                               </button>
                               <button
-                                onClick={() => setAdjusting(product)}
+                                onClick={() => setAdjustingId(product.id)}
                                 className={`stock-alert ${state}`}
                                 aria-label={`${label}, ${product.stock_quantity} unités. Ajouter du stock pour ${product.name}`}
                               >
@@ -177,18 +193,18 @@ export default function Stock() {
         }}
       </AsyncSection>
 
-      {adjusting && productsQuery.state.status === "success" && (
+      {adjusting && (
         <StockAdjustModal
           product={adjusting === "any" ? undefined : adjusting}
-          products={productsQuery.state.data}
-          onClose={() => setAdjusting(null)}
+          products={products}
+          onClose={() => setAdjustingId(null)}
           onAdjusted={adjusted}
         />
       )}
       {counting && (
         <StockCountModal
           product={counting}
-          onClose={() => setCounting(null)}
+          onClose={() => setCountingId(null)}
           onCounted={adjusted}
         />
       )}

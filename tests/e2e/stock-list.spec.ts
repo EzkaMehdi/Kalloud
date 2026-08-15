@@ -122,3 +122,55 @@ test.describe.serial("STK-08: the stock list is honest about what it knows", () 
     await expect(page.getByText("Inventaire", { exact: true })).toBeVisible();
   });
 });
+
+/**
+ * The defect the first manual run of STK-08 surfaced: the revalidation
+ * refreshed the row behind an open dialog, but the dialog kept the copy of
+ * the product it had captured when it opened — so the "stock théorique"
+ * someone was counting against could be stale until they closed and
+ * reopened it. The server was never fooled (STK-07 re-reads the balance
+ * under lock), but the figure on screen was, which is worse in its own way:
+ * it is the number a human is deciding from.
+ */
+test.describe.serial("STK-08: an open dialog follows the refresh", () => {
+  let tenant: ThrowawayTenant;
+
+  test.beforeAll(async () => {
+    tenant = await createThrowawayTenant("STK-08-dialog");
+  });
+
+  test.afterAll(() => tenant.dispose());
+
+  test("updates the theoretical stock shown while the count dialog is open", async ({ page }) => {
+    await tenant.login(page);
+    const created = await page.request.post("/api/products", {
+      data: { categoryId: null, name: "Tonic", price: "2.00", stockQuantity: 10 },
+    });
+    const product = (await created.json()) as { id: number };
+
+    await page.goto("/stock");
+    await page
+      .locator(".stock-row")
+      .filter({ hasText: "Tonic" })
+      .getByRole("button", { name: /^compter/i })
+      .click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("10 unités");
+
+    // Another device records a delivery while this dialog sits open.
+    const adjusted = await page.request.post(`/api/products/${product.id}/stock`, {
+      data: { delta: 4, type: "RECEIPT", reason: "Livraison saisie ailleurs" },
+    });
+    expect(adjusted.ok()).toBeTruthy();
+
+    await page.evaluate(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    // Without closing and reopening: the dialog now counts against 14.
+    await expect(dialog).toContainText("14 unités");
+    await expect(dialog).toBeVisible();
+  });
+});

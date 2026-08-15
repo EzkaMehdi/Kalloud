@@ -12,9 +12,18 @@ import { createCashMovement, listCashMovements } from "@/lib/repositories/cash-m
 import { parseJsonBody } from "@/lib/validation/parse";
 import { createCashMovementSchema } from "@/lib/validation/schemas";
 
+/**
+ * CASH-07: the journal of the *open service*, not of the establishment's
+ * recent history. With no service open it is empty rather than showing the
+ * last closed one — a journal under a balance of 0,00 € listing yesterday's
+ * movements invites reading them as today's.
+ */
 export const GET = apiRoute(async () => {
   const context = await requireRequestContext();
-  const movements = await listCashMovements(pool, context.locationId);
+  const day = await getActiveBusinessDay(pool, context.locationId);
+  if (!day) return jsonOk([]);
+
+  const movements = await listCashMovements(pool, context.locationId, { businessDayId: day.id });
   return jsonOk(movements);
 });
 

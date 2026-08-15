@@ -7,6 +7,10 @@ import { ReceiptDialog } from "@/components/receipt-dialog";
 import { apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 import { useCurrentUser } from "@/lib/client/use-current-user";
+import {
+  CASH_MOVEMENT_CATEGORY_LABELS,
+  type CashMovementCategory,
+} from "@/lib/validation/primitives";
 
 interface DashboardStats {
   revenue: string;
@@ -52,10 +56,17 @@ const HISTORY_PAGE_SIZE = 8;
 interface CashMovementRow {
   id: number;
   type: "OPENING" | "IN" | "OUT";
+  /** CASH-03/DEC-11: the nature of the movement, next to its direction. */
+  category: CashMovementCategory | "OPENING_FLOAT";
   amount: string;
   reason: string;
   created_at: string;
 }
+
+const MOVEMENT_CATEGORY_LABELS: Record<string, string> = {
+  ...CASH_MOVEMENT_CATEGORY_LABELS,
+  OPENING_FLOAT: "Fond de caisse",
+};
 
 const months = [
   "Janvier",
@@ -308,7 +319,10 @@ export default function Bilan() {
       <div className="section-title">
         <div>
           <h2>Journal de caisse</h2>
-          <p className="eyebrow">Mouvements les plus récents</p>
+          {/* CASH-07: the open service's journal, not the establishment's
+              recent history — it has to describe the same period as the
+              balance it sits under (DEC-04). */}
+          <p className="eyebrow">Mouvements du service en cours</p>
         </div>
       </div>
       <AsyncSection
@@ -325,11 +339,8 @@ export default function Bilan() {
                   <b>{movement.reason}</b>
                   <small>
                     {dateFormatter.format(new Date(movement.created_at))} ·{" "}
-                    {movement.type === "OPENING"
-                      ? "Ouverture"
-                      : movement.type === "IN"
-                        ? "Entrée"
-                        : "Sortie"}
+                    {MOVEMENT_CATEGORY_LABELS[movement.category] ??
+                      (movement.type === "IN" ? "Entrée" : "Sortie")}
                   </small>
                 </div>
                 <b className={movement.type === "OUT" ? "out" : "in"}>

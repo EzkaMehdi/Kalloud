@@ -65,14 +65,32 @@ export async function createCashMovement(
   return row;
 }
 
+/**
+ * CASH-07: `businessDayId` bounds the journal to one cash session.
+ *
+ * Without it the screen listed the establishment's last 100 movements
+ * whatever service they belonged to, so the morning after a close the
+ * journal still showed yesterday's float and withdrawals underneath today's
+ * balance — two numbers that describe different periods, stacked as if they
+ * explained each other. DEC-04 is explicit that a day is aggregated by
+ * `business_day_id` and never by calendar date, and this is the last read
+ * that ignored it.
+ *
+ * The filter is opt-in rather than mandatory because tests legitimately
+ * assert over everything an establishment ever recorded; the route — the
+ * only caller that feeds a screen — always passes it.
+ */
 export async function listCashMovements(
   db: Queryable,
   locationId: number,
-  limit = 100,
+  options: { businessDayId?: number; limit?: number } = {},
 ): Promise<CashMovementRow[]> {
+  const { businessDayId, limit = 100 } = options;
   const { rows } = await db.query<CashMovementRow>(
-    "SELECT * FROM cash_movements WHERE location_id = $1 ORDER BY created_at DESC LIMIT $2",
-    [locationId, limit],
+    `SELECT * FROM cash_movements
+      WHERE location_id = $1 AND ($2::INT IS NULL OR business_day_id = $2)
+      ORDER BY created_at DESC LIMIT $3`,
+    [locationId, businessDayId ?? null, limit],
   );
   return rows;
 }

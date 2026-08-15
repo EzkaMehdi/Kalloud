@@ -1,6 +1,5 @@
-import { Pool } from "pg";
-import { expect, test, type Page } from "@playwright/test";
-import { hashPassword } from "../../lib/auth/password";
+import { expect, test } from "@playwright/test";
+import { createThrowawayTenant, type ThrowawayTenant } from "./helpers/tenant";
 
 /**
  * CASH-06/DEC-04: "La clôture d'une journée est bloquée tant qu'il existe des
@@ -16,60 +15,19 @@ import { hashPassword } from "../../lib/auth/password";
  * business-day state.
  */
 
-const PASSWORD = "Password123!";
-
 test.describe.serial("CASH-06: open tickets block the close", () => {
-  let pool: Pool;
-  let organizationId: number;
-  let email: string;
+  let tenant: ThrowawayTenant;
 
   test.beforeAll(async () => {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    const {
-      rows: [org],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO organizations (name) VALUES ($1) RETURNING id",
-      [`E2E CASH-06 Org ${crypto.randomUUID().slice(0, 8)}`],
-    );
-    organizationId = org.id;
-    const {
-      rows: [location],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO locations (organization_id, name) VALUES ($1, $2) RETURNING id",
-      [org.id, "E2E CASH-06 Location"],
-    );
-    await pool.query("INSERT INTO location_settings (location_id) VALUES ($1)", [location.id]);
-
-    email = `cash06-${crypto.randomUUID().slice(0, 8)}@example.test`;
-    const {
-      rows: [user],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id",
-      [email, await hashPassword(PASSWORD), "CASH-06 Owner"],
-    );
-    await pool.query(
-      "INSERT INTO memberships (user_id, organization_id, location_id, role) VALUES ($1, $2, $3, 'OWNER')",
-      [user.id, org.id, location.id],
-    );
+    tenant = await createThrowawayTenant("CASH-06");
   });
 
-  test.afterAll(async () => {
-    await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
-    await pool.end();
-  });
-
-  async function login(page: Page) {
-    await page.goto("/login");
-    await page.getByLabel("Adresse e-mail").fill(email);
-    await page.getByLabel("Mot de passe").fill(PASSWORD);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/caisse$/);
-  }
+  test.afterAll(() => tenant.dispose());
 
   test("names the blocking ticket instead of offering a count that cannot be submitted", async ({
     page,
   }) => {
-    await login(page);
+    await tenant.login(page);
 
     await page.getByRole("button", { name: /ouvrir le service/i }).click();
     const openDialog = page.getByRole("dialog");
@@ -98,7 +56,7 @@ test.describe.serial("CASH-06: open tickets block the close", () => {
   });
 
   test("closes once the ticket is cancelled", async ({ page }) => {
-    await login(page);
+    await tenant.login(page);
 
     const tickets = await page.request.get("/api/tickets");
     const [open] = (await tickets.json()) as { id: number }[];

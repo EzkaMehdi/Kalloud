@@ -1,6 +1,5 @@
-import { Pool } from "pg";
-import { expect, test, type Page } from "@playwright/test";
-import { hashPassword } from "../../lib/auth/password";
+import { expect, test } from "@playwright/test";
+import { createThrowawayTenant, openService, type ThrowawayTenant } from "./helpers/tenant";
 
 /**
  * CASH-05 through the browser. The arithmetic and the threshold rule are
@@ -14,68 +13,19 @@ import { hashPassword } from "../../lib/auth/password";
  * tenant is being sold against concurrently by every other spec.
  */
 
-const PASSWORD = "Password123!";
-
 test.describe.serial("CASH-05: counting the drawer at closing", () => {
-  let pool: Pool;
-  let organizationId: number;
-  let email: string;
+  let tenant: ThrowawayTenant;
 
   test.beforeAll(async () => {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    const {
-      rows: [org],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO organizations (name) VALUES ($1) RETURNING id",
-      [`E2E CASH-05 Org ${crypto.randomUUID().slice(0, 8)}`],
-    );
-    organizationId = org.id;
-    const {
-      rows: [location],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO locations (organization_id, name) VALUES ($1, $2) RETURNING id",
-      [org.id, "E2E CASH-05 Location"],
-    );
-    await pool.query("INSERT INTO location_settings (location_id) VALUES ($1)", [location.id]);
-
-    email = `cash05-${crypto.randomUUID().slice(0, 8)}@example.test`;
-    const {
-      rows: [user],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id",
-      [email, await hashPassword(PASSWORD), "CASH-05 Owner"],
-    );
-    await pool.query(
-      "INSERT INTO memberships (user_id, organization_id, location_id, role) VALUES ($1, $2, $3, 'OWNER')",
-      [user.id, org.id, location.id],
-    );
+    tenant = await createThrowawayTenant("CASH-05");
   });
 
-  test.afterAll(async () => {
-    await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
-    await pool.end();
-  });
-
-  async function login(page: Page) {
-    await page.goto("/login");
-    await page.getByLabel("Adresse e-mail").fill(email);
-    await page.getByLabel("Mot de passe").fill(PASSWORD);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/caisse$/);
-  }
-
-  async function openService(page: Page, amount: string) {
-    await page.getByRole("button", { name: /ouvrir le service/i }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel(/fond de caisse d'ouverture/i).fill(amount);
-    await dialog.getByRole("button", { name: /^ouvrir le service$/i }).click();
-    await expect(page.getByText("Service ouvert", { exact: true })).toBeVisible();
-  }
+  test.afterAll(() => tenant.dispose());
 
   test("lays out the calculation above the count, and refuses a large variance without a reason", async ({
     page,
   }) => {
-    await login(page);
+    await tenant.login(page);
     await openService(page, "150");
 
     await page.getByRole("button", { name: /compter et clôturer la caisse/i }).click();
@@ -112,7 +62,7 @@ test.describe.serial("CASH-05: counting the drawer at closing", () => {
   test("closes once the variance is explained, and offers the stated float next time", async ({
     page,
   }) => {
-    await login(page);
+    await tenant.login(page);
 
     const dialog = page.getByRole("dialog");
     await page.getByRole("button", { name: /compter et clôturer la caisse/i }).click();

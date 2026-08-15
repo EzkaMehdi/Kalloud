@@ -270,3 +270,70 @@ describe("CASH-04: expected cash is one shared formula", () => {
     expect(closed.expected_cash).toBe(shown);
   });
 });
+
+/**
+ * CASH-07. The acceptance criterion — "suppression des lignes +150/−20
+ * codées en dur" — was already met before this ticket: `e06a77a`
+ * (UX-01..UX-06) replaced that fake journal with a real query. What was
+ * still missing is the livrable's other half, "journal filtré de la
+ * journée": the query read the establishment's last 100 movements whatever
+ * service they belonged to.
+ */
+describe("CASH-07: the journal belongs to one service", () => {
+  it("lists only the movements of the business day asked for", async () => {
+    const firstDay = await openNewBusinessDay(context, 15_000);
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: firstDay.id,
+      type: "OUT",
+      category: "PURCHASE",
+      amount: "20.00",
+      reason: "Achat d'hier",
+      createdBy: context.userId,
+    });
+    await closeCurrentBusinessDay(context, {
+      countedCashCents: 13_000,
+      nextOpeningCashCents: null,
+      varianceReason: null,
+    });
+
+    const secondDay = await openNewBusinessDay(context, 8_000);
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: secondDay.id,
+      type: "IN",
+      category: "FUND_TOPUP",
+      amount: "10.00",
+      reason: "Appoint du jour",
+      createdBy: context.userId,
+    });
+
+    const today = await listCashMovements(pool, tenant.locationId, {
+      businessDayId: secondDay.id,
+    });
+
+    // Yesterday's float and purchase are gone: the journal now describes the
+    // same period as the balance shown above it. Unfiltered, this returned
+    // all four rows.
+    expect(today.map((movement) => movement.reason)).toEqual([
+      "Appoint du jour",
+      "Fond de caisse — ouverture de service",
+    ]);
+    expect(await listCashMovements(pool, tenant.locationId)).toHaveLength(4);
+  });
+
+  it("carries the category, which is what the journal now shows", async () => {
+    const day = await openNewBusinessDay(context, 15_000);
+    await createCashMovement(pool, tenant.locationId, {
+      businessDayId: day.id,
+      type: "OUT",
+      category: "END_OF_SERVICE_WITHDRAWAL",
+      amount: "50.00",
+      reason: "Retrait",
+      createdBy: context.userId,
+    });
+
+    const [latest] = await listCashMovements(pool, tenant.locationId, { businessDayId: day.id });
+    // Before DEC-11 the journal could only say "Sortie"; it can now say
+    // which kind, which is the difference between a log and a ledger.
+    expect(latest.category).toBe("END_OF_SERVICE_WITHDRAWAL");
+  });
+});

@@ -1,6 +1,5 @@
-import { Pool } from "pg";
-import { expect, test, type Page } from "@playwright/test";
-import { hashPassword } from "../../lib/auth/password";
+import { expect, test } from "@playwright/test";
+import { createThrowawayTenant, type ThrowawayTenant } from "./helpers/tenant";
 
 /**
  * CASH-03 over the real HTTP + cookie pipeline. Two of the ticket's three
@@ -14,64 +13,21 @@ import { hashPassword } from "../../lib/auth/password";
  * under `fullyParallel`.
  */
 
-const PASSWORD = "Password123!";
-
 // Shared throwaway establishment, mutated by both tests: order declared, not
 // inherited from `fullyParallel` (which parallelises within a file too).
 test.describe.serial("CASH-03: a cash movement carries its category", () => {
-  let pool: Pool;
-  let organizationId: number;
-  let locationId: number;
-  let email: string;
+  let tenant: ThrowawayTenant;
 
   test.beforeAll(async () => {
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    const {
-      rows: [org],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO organizations (name) VALUES ($1) RETURNING id",
-      [`E2E CASH-03 Org ${crypto.randomUUID().slice(0, 8)}`],
-    );
-    organizationId = org.id;
-    const {
-      rows: [location],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO locations (organization_id, name) VALUES ($1, $2) RETURNING id",
-      [org.id, "E2E CASH-03 Location"],
-    );
-    locationId = location.id;
-    await pool.query("INSERT INTO location_settings (location_id) VALUES ($1)", [location.id]);
-
-    email = `cash03-${crypto.randomUUID().slice(0, 8)}@example.test`;
-    const {
-      rows: [user],
-    } = await pool.query<{ id: number }>(
-      "INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id",
-      [email, await hashPassword(PASSWORD), "CASH-03 Owner"],
-    );
-    await pool.query(
-      "INSERT INTO memberships (user_id, organization_id, location_id, role) VALUES ($1, $2, $3, 'OWNER')",
-      [user.id, org.id, location.id],
-    );
+    tenant = await createThrowawayTenant("CASH-03");
   });
 
-  test.afterAll(async () => {
-    await pool.query("DELETE FROM organizations WHERE id = $1", [organizationId]);
-    await pool.end();
-  });
-
-  async function login(page: Page) {
-    await page.goto("/login");
-    await page.getByLabel("Adresse e-mail").fill(email);
-    await page.getByLabel("Mot de passe").fill(PASSWORD);
-    await page.getByRole("button", { name: /se connecter/i }).click();
-    await expect(page).toHaveURL(/\/caisse$/);
-  }
+  test.afterAll(() => tenant.dispose());
 
   test("records an end-of-service withdrawal under its own category, and audits it", async ({
     page,
   }) => {
-    await login(page);
+    await tenant.login(page);
 
     // A movement needs an open service to belong to (CASH-01).
     await page.getByRole("button", { name: /ouvrir le service/i }).click();
@@ -95,9 +51,9 @@ test.describe.serial("CASH-03: a cash movement carries its category", () => {
 
     await expect(dialog).toHaveCount(0);
 
-    const { rows } = await pool.query<{ type: string; category: string; amount: string }>(
+    const { rows } = await tenant.pool.query<{ type: string; category: string; amount: string }>(
       "SELECT type, category, amount FROM cash_movements WHERE location_id = $1 AND type = 'OUT'",
-      [locationId],
+      [tenant.locationId],
     );
     expect(rows).toEqual([
       { type: "OUT", category: "END_OF_SERVICE_WITHDRAWAL", amount: "150.00" },
@@ -105,26 +61,26 @@ test.describe.serial("CASH-03: a cash movement carries its category", () => {
 
     // "Auditable" (acceptance): the trail has to say *which* kind of
     // outflow, not merely that 150 € left the till.
-    const { rows: audit } = await pool.query<{ action: string; after_data: { category: string } }>(
+    const { rows: audit } = await tenant.pool.query<{
+      action: string;
+      after_data: { category: string };
+    }>(
       "SELECT action, after_data FROM audit_events WHERE location_id = $1 AND action = 'cash_movement.create'",
-      [locationId],
+      [tenant.locationId],
     );
     expect(audit).toHaveLength(1);
     expect(audit[0].after_data.category).toBe("END_OF_SERVICE_WITHDRAWAL");
   });
 
   test("shows the server's refusal instead of failing silently", async ({ page }) => {
-    await login(page);
+    await tenant.login(page);
 
     // This test's precondition is "no service open", and the tests in this
-    // describe share one establishment — so it establishes that state
-    // itself rather than depending on having run before the one above.
-    // Closing is idempotent enough here: with nothing open the API refuses,
-    // which is the state we want anyway.
-    // CASH-05: closing carries the count, and a variance beyond the
-    // threshold needs a reason. The previous test's withdrawal makes this
-    // close a large one; the amounts are irrelevant here — what this test
-    // needs is the resulting state, "no service open".
+    // describe share one establishment — so it establishes that state itself
+    // rather than depending on having run after the one above. The amounts
+    // are irrelevant; the resulting state is the point. A variance beyond the
+    // threshold needs a reason (CASH-05), and the previous test's withdrawal
+    // makes this a large one.
     await page.request.post("/api/business-day/close", {
       // CASH-06/API-02: closing is idempotent-keyed like any other financial
       // write, so a lost response can be retried rather than guessed at.

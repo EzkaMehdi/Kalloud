@@ -63,8 +63,11 @@ test.describe("tenant isolation over HTTP (SEC-08)", () => {
     });
     expect(patchResponse.status()).toBe(404);
 
-    const stockResponse = await page.request.patch(`/api/products/${otherProductId}/stock`, {
-      data: { quantity: 9999 },
+    // STK-04 replaced the absolute `PATCH { quantity }` by a delta
+    // adjustment; the isolation guarantee is what this asserts, and it holds
+    // whichever shape the write takes.
+    const stockResponse = await page.request.post(`/api/products/${otherProductId}/stock`, {
+      data: { delta: 9999, type: "RECEIPT", reason: "Tentative inter-établissement" },
     });
     expect(stockResponse.status()).toBe(404);
   });

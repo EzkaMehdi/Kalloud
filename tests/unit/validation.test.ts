@@ -17,6 +17,7 @@ import {
   stockQuantitySchema,
 } from "../../lib/validation/primitives";
 import {
+  adjustStockSchema,
   cancelTicketSchema,
   checkoutBodySchema,
   closeBusinessDaySchema,
@@ -443,5 +444,40 @@ describe("API-01: failures arrive as the application's own error contract", () =
 
   it("keeps details absent when there is nothing field-specific to report", () => {
     expect(new ValidationError("Aucune journée ouverte.").details).toBeUndefined();
+  });
+});
+
+/**
+ * STK-04/DEC-06. The direction is part of what a movement type *means*: a
+ * RECEIPT that removes units is not a receipt, and `migrations/0007` refuses
+ * it at the database level. Validating it here is what turns that refusal
+ * into a named field error rather than an opaque 500 (API-01).
+ */
+describe("STK-04: stock adjustments are signed deltas", () => {
+  const base = { reason: "Motif" };
+
+  it("pairs the sign with the movement type", () => {
+    expect(accepts(adjustStockSchema, { ...base, delta: 6, type: "RECEIPT" })).toBe(true);
+    expect(accepts(adjustStockSchema, { ...base, delta: -2, type: "LOSS" })).toBe(true);
+    expect(accepts(adjustStockSchema, { ...base, delta: 3, type: "RETURN" })).toBe(true);
+    // CORRECTION is the one type free to go either way (DEC-06).
+    expect(accepts(adjustStockSchema, { ...base, delta: 4, type: "CORRECTION" })).toBe(true);
+    expect(accepts(adjustStockSchema, { ...base, delta: -4, type: "CORRECTION" })).toBe(true);
+
+    expect(accepts(adjustStockSchema, { ...base, delta: -6, type: "RECEIPT" })).toBe(false);
+    expect(accepts(adjustStockSchema, { ...base, delta: 2, type: "LOSS" })).toBe(false);
+    expect(accepts(adjustStockSchema, { ...base, delta: -1, type: "RETURN" })).toBe(false);
+  });
+
+  it("refuses a movement that moves nothing, and one nobody may record by hand", () => {
+    expect(accepts(adjustStockSchema, { ...base, delta: 0, type: "CORRECTION" })).toBe(false);
+    expect(accepts(adjustStockSchema, { ...base, delta: 1.5, type: "RECEIPT" })).toBe(false);
+    // SALE and OPENING_BALANCE belong to the checkout and to product
+    // creation; a client that could post one could forge a sale's stock
+    // effect without a sale.
+    expect(accepts(adjustStockSchema, { ...base, delta: -1, type: "SALE" })).toBe(false);
+    expect(accepts(adjustStockSchema, { ...base, delta: 1, type: "OPENING_BALANCE" })).toBe(false);
+    // The motive is mandatory, as it is for every ledger entry (DEC-06).
+    expect(accepts(adjustStockSchema, { delta: 1, type: "RECEIPT", reason: "  " })).toBe(false);
   });
 });

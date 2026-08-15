@@ -231,28 +231,6 @@ export async function updateProduct(
   return { ...row, category: null };
 }
 
-/**
- * TODO(STK-04, phase 5B): this is the prototype's absolute stock write,
- * kept only so the stock page keeps working through phase 2. It will be
- * removed in favour of a signed, motivated stock_movements ledger entry —
- * this function must not gain new callers in the meantime.
- */
-export async function overwriteProductStockQuantity(
-  db: Queryable,
-  locationId: number,
-  productId: number,
-  quantity: number,
-): Promise<ProductRow> {
-  const { rows } = await db.query<Omit<ProductRow, "category">>(
-    `UPDATE products SET stock_quantity = $3 WHERE id = $1 AND location_id = $2
-     RETURNING id, category_id, name, price, stock_quantity, alert_threshold, is_active`,
-    [productId, locationId, quantity],
-  );
-  const row = rows[0];
-  if (!row) throw new NotFoundError("Produit introuvable.");
-  return { ...row, category: null };
-}
-
 export interface LockedProduct {
   id: number;
   name: string;

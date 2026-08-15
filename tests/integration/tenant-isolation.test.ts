@@ -7,7 +7,6 @@ import {
   createProduct,
   listProducts,
   lockProductsForSale,
-  overwriteProductStockQuantity,
   updateProduct,
 } from "../../lib/repositories/products";
 import {
@@ -25,6 +24,7 @@ import { createCashMovement, listCashMovements } from "../../lib/repositories/ca
 import { getLocationSettings, listTaxClasses } from "../../lib/repositories/settings";
 import { listOrders } from "../../lib/repositories/orders";
 import { performCheckout } from "../../lib/services/checkout";
+import { adjustProductStock } from "../../lib/services/stock";
 import {
   openDirectSaleTicket,
   openOrResumeTableTicket,
@@ -105,7 +105,7 @@ describe("SEC-08: catalog isolation", () => {
     expect(untouched.find((p) => p.id === productB.id)?.name).toBe("Tenant B Product");
   });
 
-  it("refuses a cross-tenant absolute stock write", async () => {
+  it("refuses a cross-tenant stock adjustment", async () => {
     const productB = await createProduct(pool, tenantB.locationId, {
       categoryId: null,
       name: "Tenant B Stock Target",
@@ -113,8 +113,17 @@ describe("SEC-08: catalog isolation", () => {
       stockQuantity: 5,
     });
 
+    // STK-04 replaced the absolute write this used to exercise
+    // (`overwriteProductStockQuantity`, removed with its endpoint) by a
+    // delta adjustment. The isolation guarantee is unchanged and still
+    // worth asserting: tenant A cannot reach tenant B's product, whichever
+    // shape the write takes.
     await expect(
-      overwriteProductStockQuantity(pool, tenantA.locationId, productB.id, 9999),
+      adjustProductStock(contextA, productB.id, {
+        delta: 9999,
+        type: "RECEIPT",
+        reason: "Tentative inter-établissement",
+      }),
     ).rejects.toBeInstanceOf(NotFoundError);
 
     const untouched = await listProducts(pool, tenantB.locationId);

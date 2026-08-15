@@ -26,11 +26,12 @@ export default function Stock() {
   const [notice, setNotice] = useState("");
 
   /**
-   * TODO(STK-05, phase 5B): replaces the native prompt()/alert() pair with a
-   * proper contextual dialog carrying a reason. Kept as-is for phase 2,
-   * which only had to make the underlying call authenticated, scoped and
-   * non-silent on failure (SEC-03/04/06, UX-01) — not redesign the
-   * interaction itself.
+   * TODO(STK-05, phase 5B): still the native prompt(), which is what STK-05
+   * replaces with a contextual dialog carrying the movement type and its
+   * reason. What changed in STK-04 is underneath: the call now posts a
+   * *delta* instead of `product.stock_quantity + amount`, an absolute total
+   * built from this component's own possibly-stale copy — a sale settled
+   * between render and click used to be erased by it.
    */
   async function addStock(product: Product) {
     const raw = window.prompt(`Quantité à ajouter pour ${product.name}`, "1");
@@ -38,8 +39,12 @@ export default function Stock() {
     if (!raw || !Number.isFinite(amount) || amount <= 0) return;
     try {
       await apiFetch(`/api/products/${product.id}/stock`, {
-        method: "PATCH",
-        body: JSON.stringify({ quantity: product.stock_quantity + amount }),
+        method: "POST",
+        body: JSON.stringify({
+          delta: amount,
+          type: "RECEIPT",
+          reason: "Réception de marchandise",
+        }),
       });
       productsQuery.refetch();
     } catch (caught) {

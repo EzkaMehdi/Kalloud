@@ -75,8 +75,17 @@ test.describe("SALE-10: recovering from a rupture reaches a completed sale, not 
 
     // Someone else sells the last unit of `runsOut` while this ticket is
     // still open — the exact race SALE-07 targets, forced deterministically.
-    const patch = await page.request.patch(`/api/products/${runsOut.id}/stock`, {
-      data: { quantity: 0 },
+    //
+    // STK-04 removed the absolute write this used to do (`PATCH {quantity:
+    // 0}`). Emptying a product is now what it always was in the ledger: a
+    // motivated CORRECTION of the balance, which is the one type free to
+    // move either way (DEC-06).
+    const patch = await page.request.post(`/api/products/${runsOut.id}/stock`, {
+      data: {
+        delta: -1, // createProduct(…, 1) just above
+        type: "CORRECTION",
+        reason: "Test : produit épuisé pendant que le ticket est ouvert",
+      },
     });
     expect(patch.ok()).toBeTruthy();
 
@@ -105,7 +114,7 @@ test.describe("SALE-10: recovering from a rupture reaches a completed sale, not 
     // The kept item sold normally...
     expect(productsAfter.find((row) => row.id === keeper.id)?.stock_quantity).toBe(4);
     // ...and the removed one was never touched by this sale — its stock is
-    // still exactly what the direct PATCH above set, not decremented again.
+    // still exactly what the correction above left, not decremented again.
     expect(productsAfter.find((row) => row.id === runsOut.id)?.stock_quantity).toBe(0);
   });
 

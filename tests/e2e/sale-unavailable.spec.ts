@@ -90,8 +90,15 @@ test.describe("SALE-07: a late stock change is explained and the ticket stays co
     // Simulates another sale/adjustment depleting this exact product while
     // the ticket is still open — the race SALE-07 is about, forced
     // deterministically instead of hoped for.
-    const stockPatch = await page.request.patch(`/api/products/${product.id}/stock`, {
-      data: { quantity: 0 },
+    // STK-04 removed the absolute write this used to do (`PATCH {quantity:
+    // 0}`). Emptying a product is now a motivated CORRECTION — the one
+    // movement type free to move the balance either way (DEC-06).
+    const stockPatch = await page.request.post(`/api/products/${product.id}/stock`, {
+      data: {
+        delta: -1, // createProduct(…, 1) just above
+        type: "CORRECTION",
+        reason: "Test : produit épuisé pendant que le ticket est ouvert",
+      },
     });
     expect(stockPatch.ok()).toBeTruthy();
 

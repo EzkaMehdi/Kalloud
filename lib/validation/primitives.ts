@@ -50,6 +50,51 @@ export const quantitySchema = z
   .min(1, { error: "La quantité doit être au moins de 1." })
   .max(MAX_QUANTITY, { error: `La quantité ne peut pas dépasser ${MAX_QUANTITY}.` });
 
+/**
+ * STK-04/DEC-06: the movement types a human may record by hand.
+ *
+ * `SALE` and `OPENING_BALANCE` are absent on purpose — DEC-06 assigns their
+ * triggers to the checkout and to product creation respectively, so letting
+ * a client post one would let it forge a sale's stock effect without a sale.
+ * Same discipline as `CASH_MOVEMENT_TYPES` keeping `OPENING` out of reach.
+ */
+export const MANUAL_STOCK_MOVEMENT_TYPES = ["RECEIPT", "CORRECTION", "LOSS", "RETURN"] as const;
+export type ManualStockMovementType = (typeof MANUAL_STOCK_MOVEMENT_TYPES)[number];
+export const manualStockMovementTypeSchema = z.enum(MANUAL_STOCK_MOVEMENT_TYPES, {
+  error: "Type de mouvement de stock invalide.",
+});
+
+/**
+ * Which way each type may move the balance, mirroring the `CHECK` in
+ * `migrations/0007`. Duplicated here so a mismatch is a named field error
+ * (API-01) instead of a constraint violation surfacing as a 500 — the
+ * database stays the authority, this is the part the user can read.
+ * `CORRECTION` is the one type free to go either way (DEC-06).
+ */
+export const STOCK_MOVEMENT_DIRECTION: Record<ManualStockMovementType, "in" | "out" | "either"> = {
+  RECEIPT: "in",
+  RETURN: "in",
+  LOSS: "out",
+  CORRECTION: "either",
+};
+
+/** French labels, shared by the stock screen and its movement history. */
+export const STOCK_MOVEMENT_TYPE_LABELS: Record<ManualStockMovementType, string> = {
+  RECEIPT: "Réception de marchandise",
+  RETURN: "Retour",
+  LOSS: "Perte ou casse",
+  CORRECTION: "Correction d'écart",
+};
+
+/** A signed adjustment. Zero is refused: a movement that changes nothing is not a movement. */
+export const stockDeltaSchema = z
+  .number({ error: "Quantité invalide." })
+  .int({ error: "La quantité doit être un nombre entier." })
+  .refine((value) => value !== 0, { error: "La quantité ne peut pas être nulle." })
+  .refine((value) => Math.abs(value) <= MAX_QUANTITY, {
+    error: `La quantité ne peut pas dépasser ${MAX_QUANTITY}.`,
+  });
+
 /** Absolute stock counts differ from order quantities: 0 is a legitimate value ("rupture"). */
 export const stockQuantitySchema = z
   .number({ error: "Quantité invalide." })

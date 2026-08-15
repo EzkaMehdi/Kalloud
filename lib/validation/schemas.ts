@@ -9,7 +9,10 @@ import {
   moneyAmountSchema,
   noteSchema,
   paymentMethodSchema,
+  manualStockMovementTypeSchema,
   quantitySchema,
+  STOCK_MOVEMENT_DIRECTION,
+  stockDeltaSchema,
   reasonSchema,
   shortTextSchema,
   stockQuantitySchema,
@@ -162,8 +165,36 @@ export const updateProductSchema = z
   });
 export type UpdateProductBody = z.infer<typeof updateProductSchema>;
 
-export const updateStockSchema = z.strictObject({ quantity: stockQuantitySchema });
-export type UpdateStockBody = z.infer<typeof updateStockSchema>;
+/**
+ * STK-04: a stock change is a *delta*, never a total.
+ *
+ * `updateStockSchema` — `{ quantity }`, the new absolute balance — is gone
+ * with the endpoint that took it. The screen computed that total as
+ * `product.stock_quantity + amount` from whatever it had loaded, so a sale
+ * settled in between was silently overwritten: the acceptance criterion
+ * ("aucune mise à jour absolue depuis un état client périmé") is about
+ * exactly that arithmetic. A delta carries no opinion about the balance it
+ * lands on, so there is nothing stale to send.
+ */
+export const adjustStockSchema = z
+  .strictObject({
+    delta: stockDeltaSchema,
+    type: manualStockMovementTypeSchema,
+    reason: reasonSchema,
+  })
+  // The direction is part of what the type *means* (DEC-06): a RECEIPT that
+  // removes units is not a receipt. `migrations/0007` enforces the same
+  // pairing; this is the half the user can read.
+  .refine(
+    (body) =>
+      STOCK_MOVEMENT_DIRECTION[body.type] === "either" ||
+      (STOCK_MOVEMENT_DIRECTION[body.type] === "in" ? body.delta > 0 : body.delta < 0),
+    {
+      error: "Le sens de la quantité ne correspond pas au type de mouvement.",
+      path: ["delta"],
+    },
+  );
+export type AdjustStockBody = z.infer<typeof adjustStockSchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Floor plan                                                                 */

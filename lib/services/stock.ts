@@ -1,7 +1,81 @@
-import { ValidationError } from "../errors";
+import { recordAuditEvent } from "../audit";
+import { NotFoundError, ValidationError } from "../errors";
 import { lockActiveProductForStockOperation } from "../repositories/products";
 import { recordStockMovement, type StockMovementType } from "../repositories/stock-movements";
-import type { Queryable } from "../db";
+import { withTransaction, type Queryable } from "../db";
+import type { ManualStockMovementType } from "../validation/primitives";
+import type { RequestContext } from "../context";
+
+export interface AdjustStockInput {
+  /** Signed, as the ledger itself is (DEC-06). */
+  delta: number;
+  type: ManualStockMovementType;
+  reason: string;
+}
+
+export interface AdjustStockResult {
+  movement: Awaited<ReturnType<typeof recordStockMovement>>["movement"];
+  balance: number;
+}
+
+/**
+ * STK-04: the one way a human changes a product's stock.
+ *
+ * It replaces `PATCH /api/products/[id]/stock`, which took the new *total*
+ * and overwrote the column with it. The screen produced that total as
+ * `product.stock_quantity + amount` from the copy it had loaded, so a sale
+ * settled between the page render and the click was erased — the balance
+ * went back to what the client believed, and the ledger and the column
+ * disagreed with no record of why. A delta cannot do that: it says how much
+ * to move, never what the answer should be, so a concurrent sale simply
+ * composes with it.
+ *
+ * The row is locked for the same reason every other stock write locks it:
+ * the movement and the materialized balance must move together (DEC-06).
+ *
+ * Negative balances are refused, except for `CORRECTION` — DEC-06 allows one
+ * "exceptionnelle, documentée" catch-up to land below zero, and the reason
+ * is mandatory precisely so it is documented.
+ */
+export async function adjustProductStock(
+  context: RequestContext,
+  productId: number,
+  input: AdjustStockInput,
+): Promise<AdjustStockResult> {
+  return withTransaction(async (client) => {
+    const product = await lockActiveProductForStockOperation(client, context.locationId, productId);
+    if (!product) {
+      throw new NotFoundError("Produit introuvable.");
+    }
+
+    const balanceAfter = product.stockQuantity + input.delta;
+    if (balanceAfter < 0 && input.type !== "CORRECTION") {
+      throw new ValidationError(
+        `Stock insuffisant pour "${product.name}" : le solde passerait à ${balanceAfter}.`,
+      );
+    }
+
+    const { movement, balance } = await recordStockMovement(client, context.locationId, {
+      productId,
+      quantity: input.delta,
+      type: input.type,
+      reason: input.reason,
+      createdBy: context.userId,
+    });
+
+    await recordAuditEvent(client, {
+      locationId: context.locationId,
+      actorUserId: context.userId,
+      action: "stock.adjust",
+      targetType: "product",
+      targetId: productId,
+      before: { stockQuantity: product.stockQuantity },
+      after: { delta: input.delta, type: input.type, reason: input.reason, stockQuantity: balance },
+    });
+
+    return { movement, balance };
+  });
+}
 
 export interface StockDecrementItem {
   productId: number;

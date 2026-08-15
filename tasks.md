@@ -763,11 +763,12 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Acceptation : caisse attendue entièrement reconstructible pour chaque scénario.
   - Mise en œuvre : audit des sept angles du livrable avant d'écrire quoi que ce soit. **Cinq étaient déjà prouvés** par les tests livrés avec leur propre tâche, et ne sont pas dupliqués : formules et remboursement espèces (`CASH-04`, `tests/integration/cash-movements.test.ts`), écarts — seuil, symétrie excédent/manque, silence sous le seuil — ainsi que tickets ouverts et concurrence (`CASH-05`/`CASH-06`, `tests/integration/business-day.test.ts`). Réécrire ces cas aurait gonflé la suite sans rien garder de plus. Restaient les deux que le livrable nomme et qu'aucun test ne touchait, **fuseau** et **passage de minuit**, plus le critère d'acceptation lui-même, qui est une affirmation sur le registre entier et non sur une formule. `tests/integration/cash-reconciliation.test.ts` (nouveau) : deux cas de minuit — des mouvements de part et d'autre de minuit restent dans le même tiroir, et la clôture porte sur la session complète et non sur un jour calendaire (`DEC-04` : « une session peut dépasser minuit sans se clôturer automatiquement ») ; un cas de fuseau — deux établissements, l'un à `Europe/Paris`, l'autre à `Pacific/Auckland` qui est sur la date calendaire *suivante* aux instants testés, produisent le même montant attendu, parce que la formule ne demande jamais quel jour on est : elle filtre sur `business_day_id` seul, le fuseau ne gouvernant que les périodes de reporting (`BI-03`) ; et un cas de reconstructibilité — un service complet (fond, vente espèces, vente carte, remboursement espèces, appoint, achat, retrait de fin de service, mouvements à cheval sur minuit) dont le montant attendu est **reconstruit depuis les tables brutes**, comme le ferait un comptable depuis le journal, puis confronté au calcul en direct et au montant figé à la clôture — les trois doivent coïncider, et chaque terme est vérifié individuellement pour qu'un désaccord soit localisable et pas seulement constatable. Les tests de minuit ont été validés par mutation : en datant temporairement la formule sur un jour calendaire, trois des quatre cas tombent. Le cas de fuseau, lui, reste vert sous cette mutation — les deux établissements reçoivent la même mauvaise réponse — ce qui est noté ici parce que c'est exactement ce qu'il garde : la non-divergence entre établissements, pas le datage lui-même, dont les cas de minuit se chargent.
 
-- [ ] **`CASH-09` — Tester journal et rafraîchissement de l’interface**
+- [x] **`CASH-09` — Tester journal et rafraîchissement de l’interface**
   - Priorité : `P1`
   - Dépend de : `CASH-07`, `CASH-08`
   - Livrable : tests des données réelles, états réseau et mise à jour après vente/mouvement.
   - Acceptation : aucune ligne fictive et aucun solde obsolète après une opération réussie.
+  - Mise en œuvre : même audit préalable que `CASH-08`. La mise à jour après vente était prouvée par `SALE-06` et celle après mouvement par `CASH-07` ; elles ne sont pas redites. Le volet jamais couvert est celui des **états réseau** — un écran qui continue silencieusement d'afficher le dernier chiffre qu'il a réussi à récupérer est, pour qui le lit, indiscernable d'un écran à jour ; pour une caisse, c'est la différence entre un solde et une supposition. `tests/e2e/cash-journal-states.spec.ts` (nouveau, 4 cas) : (1) le journal affiche **exactement** les lignes enregistrées — l'assertion porte sur leur *nombre*, ce qui est ce qui attrape une ligne fictive, les `+150/−20` codés en dur d'autrefois en auraient fait quatre au lieu de deux ; (2) sans service ouvert, l'écran dit « Aucun mouvement de caisse enregistré » au lieu de laisser les lignes du service précédent sous un solde à 0,00 € — la forme la plus tranchée de « aucune ligne fictive » ; (3) une récupération du journal qui échoue affiche une alerte avec un bouton de réessai, et **pas** une liste vide (« rien à montrer » et « je n'ai pas pu demander » sont deux faits différents, un seul appartient à l'établissement), puis le réessai ramène les vraies données ; (4) quand `/api/cash-summary` échoue, la carte affiche `—` et jamais le dernier montant connu. Les pannes sont simulées en interrompant la requête (`route.abort`), même précédent que la spec de `SALE-08`. Un détail trouvé en écrivant le cas (3) : la page émet la requête **deux fois** sous la double invocation des effets React en développement, si bien qu'un échec à un coup était réparé par la seconde requête avant que l'assertion ne s'exécute ; la panne est donc maintenue depuis le test et levée explicitement avant le réessai, plutôt que désarmée après le premier appel.
 
 ## 12. Phase 5B — Stock traçable
 
@@ -815,11 +816,12 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
 
 ### `GATE-5` — Exploitation réconciliable
 
-- [ ] Une journée de caisse peut être ouverte, comptée et clôturée.
-- [ ] Tout écart de caisse est visible et justifiable.
-- [ ] Tout mouvement de caisse possède un auteur et un motif.
+- [x] Une journée de caisse peut être ouverte, comptée et clôturée. (`CASH-02` — deux actions distinctes ; `CASH-05` — comptage et clôture définitive)
+- [x] Tout écart de caisse est visible et justifiable. (`CASH-05` — écart affiché dès la saisie, motif obligatoire au-delà du seuil `CFG-00`, `cash_variance` généré en base)
+- [x] Tout mouvement de caisse possède un auteur et un motif. (`CASH-03` — `created_by` `NOT NULL` et motif obligatoire dans le schéma, plus une catégorie contrainte par `DEC-11`)
 - [ ] Tout stock courant est reconstructible depuis son ledger.
 - [ ] Caisse et Stock peuvent être utilisés sans `prompt()`, `alert()` ou données fictives.
+      *(Volet caisse fait — `CASH-07`/`CASH-09` : journal réel borné au service, aucune ligne fictive. Le volet stock reste ouvert : `STK-05` doit encore remplacer `prompt()`.)*
 
 ## 13. Phase 6 — Cockpit gérant
 

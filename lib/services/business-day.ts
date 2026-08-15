@@ -8,8 +8,10 @@ import {
   closeBusinessDay,
   getActiveBusinessDay,
   getBusinessDaySummary,
+  lockActiveBusinessDay,
   openBusinessDay,
 } from "../repositories/business-days";
+import { listOpenTickets } from "../repositories/tickets";
 import {
   createCashMovement,
   getExpectedCash,
@@ -122,9 +124,29 @@ export async function closeCurrentBusinessDay(
   input: CloseBusinessDayInput,
 ): Promise<CloseBusinessDayResult> {
   return withTransaction(async (client) => {
-    const activeDay = await getActiveBusinessDay(client, context.locationId);
+    // CASH-06: locked, not merely read. Everything below decides whether and
+    // how this day closes, and none of it is safe while another request can
+    // close it underneath.
+    const activeDay = await lockActiveBusinessDay(client, context.locationId);
     if (!activeDay) {
       throw new ValidationError("Aucune journée ouverte.");
+    }
+
+    // CASH-06/DEC-04: "La clôture d'une journée est bloquée tant qu'il existe
+    // des commandes OPEN." Refused rather than resolved: closing must never
+    // cancel or settle someone's ticket on their behalf. The list is what the
+    // closing screen shows (GET /api/business-day/summary), so by the time a
+    // user can click, they have already been told which tickets stand in the
+    // way — this check is what makes that promise true under concurrency,
+    // when a ticket is opened after the screen loaded.
+    const openTickets = await listOpenTickets(client, context.locationId);
+    if (openTickets.length > 0) {
+      const labels = openTickets
+        .map((ticket) => ticket.table_name ?? `Ticket #${ticket.order_number}`)
+        .join(", ");
+      throw new ConflictError(
+        `${openTickets.length} ticket(s) encore ouvert(s) : ${labels}. Encaissez-les ou annulez-les avant de clôturer.`,
+      );
     }
 
     const summary = await getBusinessDaySummary(client, context.locationId, activeDay.id);

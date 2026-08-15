@@ -4,6 +4,9 @@ import { ConflictError, ValidationError } from "../../lib/errors";
 import { getActiveBusinessDay, getLastNextOpeningCash } from "../../lib/repositories/business-days";
 import { listCashMovements } from "../../lib/repositories/cash-movements";
 import { closeCurrentBusinessDay, openNewBusinessDay } from "../../lib/services/business-day";
+import { cancelTicket, getTicket, openDirectSaleTicket } from "../../lib/services/tickets";
+import { parseOrThrow } from "../../lib/validation/parse";
+import { cancelTicketSchema } from "../../lib/validation/schemas";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
 import type { RequestContext } from "../../lib/context";
@@ -327,5 +330,88 @@ describe("CASH-05: counting the drawer and explaining the variance", () => {
     // A close that named no next float proposes none, rather than quoting
     // the counted amount as if it had been decided.
     expect(await getLastNextOpeningCash(pool, tenant.locationId)).toBeNull();
+  });
+});
+
+/**
+ * CASH-06/DEC-04. Two protections that look unrelated but answer the same
+ * question — "is this service really closeable, right now?" — and that both
+ * only fail under conditions a single-threaded test never reaches.
+ */
+describe("CASH-06: securing the close", () => {
+  it("refuses to close while a ticket is still open, and names it", async () => {
+    await openNewBusinessDay(context, 15_000);
+    const ticket = await openDirectSaleTicket(context);
+
+    const failure = await closeCurrentBusinessDay(context, countingExactly(15_000)).catch(
+      (error) => error,
+    );
+
+    expect(failure).toBeInstanceOf(ConflictError);
+    // Named, not merely counted: "1 ticket ouvert" leaves the user hunting
+    // through the floor plan for which one.
+    expect((failure as ConflictError).message).toContain(`Ticket #${ticket.order_number}`);
+    // Refused, never resolved on the user's behalf — DEC-04 forbids closing
+    // from cancelling or settling a ticket silently.
+    expect(await getActiveBusinessDay(pool, tenant.locationId)).not.toBeNull();
+    expect((await getTicket(context, ticket.id)).status).toBe("OPEN");
+  });
+
+  it("closes once the blocking ticket is dealt with", async () => {
+    await openNewBusinessDay(context, 15_000);
+    const ticket = await openDirectSaleTicket(context);
+    await cancelTicket(
+      context,
+      ticket.id,
+      parseOrThrow(cancelTicketSchema, { reason: "Abandonné" }),
+    );
+
+    const { closed } = await closeCurrentBusinessDay(context, countingExactly(15_000));
+
+    expect(closed.status).toBe("CLOSED");
+  });
+
+  /**
+   * The acceptance criterion, verbatim: "deux requêtes concurrentes ne
+   * ferment pas deux fois". Before `lockActiveBusinessDay`, both calls read
+   * the same OPEN day and both proceeded — the second overwrote the first's
+   * count, variance and author, and wrote a second audit entry for one
+   * service closed once.
+   */
+  it("lets exactly one of two simultaneous closes through", async () => {
+    await openNewBusinessDay(context, 15_000);
+
+    const outcomes = await Promise.allSettled([
+      closeCurrentBusinessDay(context, {
+        countedCashCents: 15_000,
+        nextOpeningCashCents: null,
+        varianceReason: null,
+      }),
+      closeCurrentBusinessDay(context, {
+        countedCashCents: 12_000,
+        nextOpeningCashCents: null,
+        varianceReason: "Deuxième requête, ne doit pas passer",
+      }),
+    ]);
+
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+
+    // One closed row, and its count is the winner's — not overwritten by the
+    // loser, which is what a silent second UPDATE looked like.
+    const { rows } = await pool.query<{ count: string; counted_cash: string }>(
+      `SELECT COUNT(*)::TEXT AS count, MIN(counted_cash)::TEXT AS counted_cash
+         FROM business_days WHERE location_id = $1 AND status = 'CLOSED'`,
+      [tenant.locationId],
+    );
+    expect(rows[0].count).toBe("1");
+    expect(rows[0].counted_cash).toBe("150.00");
+
+    // And one audit entry: a service closed once is described once.
+    const { rows: audit } = await pool.query<{ count: string }>(
+      "SELECT COUNT(*)::TEXT AS count FROM audit_events WHERE location_id = $1 AND action = 'business_day.close'",
+      [tenant.locationId],
+    );
+    expect(audit[0].count).toBe("1");
   });
 });

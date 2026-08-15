@@ -31,6 +31,31 @@ export async function getActiveBusinessDay(
   return rows[0] ?? null;
 }
 
+/**
+ * CASH-06: the same read, holding the row until the transaction ends.
+ *
+ * Two simultaneous "Compter et clôturer" taps both used to see an OPEN day
+ * and both proceed — the second overwrote the first's count, variance and
+ * author, and wrote a second audit entry for a service that was closed once.
+ * With the lock, the second request blocks until the first commits; under
+ * READ COMMITTED Postgres then re-evaluates `status = 'OPEN'` against the
+ * committed row, finds it no longer matches, and returns nothing. The caller
+ * gets "aucune journée ouverte", which is the truth by the time it asks.
+ */
+export async function lockActiveBusinessDay(
+  db: Queryable,
+  locationId: number,
+): Promise<BusinessDayRow | null> {
+  const { rows } = await db.query<BusinessDayRow>(
+    `SELECT * FROM business_days
+      WHERE location_id = $1 AND status = 'OPEN'
+      ORDER BY id DESC LIMIT 1
+      FOR UPDATE`,
+    [locationId],
+  );
+  return rows[0] ?? null;
+}
+
 export interface BusinessDaySummary {
   revenue: string;
   cash_revenue: string;
@@ -147,7 +172,11 @@ export async function closeBusinessDay(
             variance_reason = $5,
             next_opening_cash = $6,
             closed_by = $7
-      WHERE id = $1 AND location_id = $2 RETURNING *`,
+      -- CASH-06: the status filter is a second line of defence behind
+      -- lockActiveBusinessDay. Without it this UPDATE would happily rewrite
+      -- an already-closed day's count and author, which is how a double
+      -- close used to look from the database's side.
+      WHERE id = $1 AND location_id = $2 AND status = 'OPEN' RETURNING *`,
     [
       businessDayId,
       locationId,

@@ -126,6 +126,9 @@ test.describe.serial("CASH-03: a cash movement carries its category", () => {
     // close a large one; the amounts are irrelevant here — what this test
     // needs is the resulting state, "no service open".
     await page.request.post("/api/business-day/close", {
+      // CASH-06/API-02: closing is idempotent-keyed like any other financial
+      // write, so a lost response can be retried rather than guessed at.
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       data: { countedCash: "200.00", varianceReason: "Clôture de test" },
     });
     await page.reload();

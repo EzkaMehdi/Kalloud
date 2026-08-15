@@ -261,6 +261,22 @@ export async function cancelTicket(
  * to reach again or cancel. ORD-07's "un seul parcours" means the counter
  * needs the same "reprendre un ticket" affordance a table already has.
  */
+/**
+ * CASH-06/DEC-04: every ticket still open for the establishment, tables and
+ * counter alike. `listOpenCounterTickets` below answers a different question
+ * — what the caisse screen must surface because no table shows it — and
+ * deliberately excludes seated tickets, which would make it the wrong basis
+ * for "peut-on clôturer ?".
+ */
+export async function listOpenTickets(db: Queryable, locationId: number): Promise<TicketRow[]> {
+  const { rows } = await db.query<TicketRow>(
+    `${TICKET_SELECT} WHERE o.location_id = $1 AND o.status = 'OPEN'
+     ORDER BY o.created_at`,
+    [locationId],
+  );
+  return rows;
+}
+
 export async function listOpenCounterTickets(
   db: Queryable,
   locationId: number,

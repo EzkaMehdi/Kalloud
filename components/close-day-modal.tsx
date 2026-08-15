@@ -22,10 +22,18 @@ interface ExpectedCash {
   expected: string;
 }
 
+interface BlockingTicket {
+  id: number;
+  order_number: number;
+  table_name: string | null;
+  total_amount: string;
+}
+
 interface SummaryResponse {
   summary: Summary;
   expectedCash: ExpectedCash;
   cashDiscrepancyThreshold: number;
+  blockingTickets: BlockingTicket[];
 }
 
 const euro = (value: string | number) => `${Number(value).toFixed(2).replace(".", ",")} €`;
@@ -60,6 +68,7 @@ export function CloseDayModal({
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     apiFetch<SummaryResponse>("/api/business-day/summary")
@@ -81,6 +90,9 @@ export function CloseDayModal({
   const variance = data && countedIsValid ? counted - Number(data.expectedCash.expected) : null;
   const reasonRequired =
     data !== null && variance !== null && Math.abs(variance) > data.cashDiscrepancyThreshold;
+  // CASH-06/DEC-04: a service with tickets still open cannot be closed, and
+  // closing must never settle or cancel one on the user's behalf.
+  const blocked = (data?.blockingTickets.length ?? 0) > 0;
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -93,6 +105,10 @@ export function CloseDayModal({
     try {
       await apiFetch("/api/business-day/close", {
         method: "POST",
+        // API-02/CASH-06: one key per intended close, reused on every retry
+        // — a lost response must never leave the cashier unsure whether the
+        // service closed, for an act that cannot be undone (DEC-04).
+        idempotencyKey,
         body: JSON.stringify({
           countedCash: counted.toFixed(2),
           ...(nextOpeningCash.trim() === ""
@@ -126,6 +142,32 @@ export function CloseDayModal({
           <p className="stock-meta" role="status">
             Chargement du bilan…
           </p>
+        ) : blocked ? (
+          /* The whole reconciliation form is withheld rather than shown and
+             disabled: none of it can be acted on, and a counted amount typed
+             against a total that is still moving would be thrown away. */
+          <div>
+            <p className="form-error" role="alert">
+              {data.blockingTickets.length} ticket(s) encore ouvert(s). Encaissez-les ou annulez-les
+              avant de clôturer le service.
+            </p>
+            <div className="closing-summary">
+              {data.blockingTickets.map((ticket) => (
+                <div key={ticket.id}>
+                  <span>{ticket.table_name ?? `Ticket #${ticket.order_number}`}</span>
+                  <b>{euro(ticket.total_amount)}</b>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={onClose}
+              style={{ width: "100%", marginTop: 20 }}
+            >
+              Revenir au plan de salle
+            </button>
+          </div>
         ) : (
           <>
             {/* DEC-04, dans l'ordre : fond, détail, attendu. */}
@@ -219,15 +261,17 @@ export function CloseDayModal({
             {error}
           </p>
         )}
-        <button
-          className="primary-button"
-          disabled={!data || saving}
-          type="submit"
-          style={{ width: "100%", marginTop: 20 }}
-        >
-          <CalendarCheck size={18} aria-hidden="true" />
-          {saving ? "Clôture…" : "Compter et clôturer la caisse"}
-        </button>
+        {!blocked && (
+          <button
+            className="primary-button"
+            disabled={!data || saving}
+            type="submit"
+            style={{ width: "100%", marginTop: 20 }}
+          >
+            <CalendarCheck size={18} aria-hidden="true" />
+            {saving ? "Clôture…" : "Compter et clôturer la caisse"}
+          </button>
+        )}
       </form>
     </Dialog>
   );

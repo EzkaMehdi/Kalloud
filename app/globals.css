@@ -179,6 +179,40 @@ h2 {
   border-radius: 50%;
   background: currentColor;
 }
+/* BI-06: "à traiter maintenant" — each alert is a link, styled to look
+   clickable rather than as a passive status line. `.critical` (rupture,
+   clôture en retard) reads more urgent than `.warning`, matching the
+   severity lib/services/alerts.ts assigns each type. */
+.alerts-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 20px;
+}
+.alert-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border-left: 4px solid var(--orange);
+  background: #fff7ee;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.alert-card.critical {
+  border-left-color: var(--red);
+  background: #fdeeec;
+}
+.alert-action {
+  flex-shrink: 0;
+  font-weight: 700;
+  color: var(--forest);
+  white-space: nowrap;
+}
 /* BI-05: établissement / période / état du service / dernière synchronisation,
    always shown together so a figure below is never read out of context. */
 .context-banner {

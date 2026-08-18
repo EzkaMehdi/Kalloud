@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
 import { ContextBanner } from "@/components/context-banner";
@@ -86,6 +87,15 @@ const months = [
 
 const PAYMENT_LABELS: Record<string, string> = { CASH: "Espèces", CARD: "CB", MIXED: "Mixte" };
 
+/** BI-06: mirrors lib/services/alerts.ts::Alert — the client boundary keeps its own narrowed copy, same convention as every other interface in this file. */
+interface AlertRow {
+  type: string;
+  severity: "critical" | "warning";
+  message: string;
+  actionLabel: string;
+  actionHref: string;
+}
+
 export default function Bilan() {
   const now = useMemo(() => new Date(), []);
   const years = useMemo(() => [now.getFullYear(), now.getFullYear() - 1], [now]);
@@ -127,6 +137,7 @@ export default function Bilan() {
     () => apiFetch<{ businessDayOpen: boolean }>("/api/cash-summary"),
     [],
   );
+  const alertsQuery = useAsyncData(() => apiFetch<AlertRow[]>("/api/alerts"), []);
 
   // BI-05: "dernière synchronisation" — l'instant où l'un des trois widgets
   // du Bilan a le plus récemment reçu des données fraîches du serveur, pas
@@ -181,6 +192,32 @@ export default function Bilan() {
         }
         lastSyncedAt={lastSyncedAt}
       />
+
+      {/* BI-06: VISION_PRODUIT_ET_AUDIT.md §10's "Bloc À traiter maintenant" —
+          period-independent on purpose, unlike everything below: an open
+          ticket sitting for three hours matters whether the manager is
+          currently looking at "Aujourd'hui" or "Cette année". */}
+      <AsyncSection
+        state={alertsQuery.state}
+        onRetry={alertsQuery.refetch}
+        isEmpty={(data) => data.length === 0}
+        emptyMessage="Aucune alerte : rien à traiter pour le moment."
+      >
+        {(alerts) => (
+          <div className="alerts-block">
+            {alerts.map((alert) => (
+              <Link
+                key={alert.type}
+                href={alert.actionHref}
+                className={`alert-card ${alert.severity}`}
+              >
+                <span>{alert.message}</span>
+                <span className="alert-action">{alert.actionLabel} →</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </AsyncSection>
 
       <div className="segmented" role="tablist" aria-label="Période">
         {(["Aujourd’hui", "Ce mois", "Cette année"] as const).map((option) => (

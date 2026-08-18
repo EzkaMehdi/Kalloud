@@ -443,9 +443,9 @@ describe("API-01: catalog, floor plan and cash payloads", () => {
 
     // A range with no honest default: both bounds are required, and the
     // pair must not be inverted.
-    expect(accepts(metricsQuerySchema, { period: "range", from: "2026-01-01T00:00:00+01:00" })).toBe(
-      false,
-    );
+    expect(
+      accepts(metricsQuerySchema, { period: "range", from: "2026-01-01T00:00:00+01:00" }),
+    ).toBe(false);
     expect(
       accepts(metricsQuerySchema, {
         period: "range",

@@ -170,7 +170,9 @@ export async function getMetrics(locationId: number, query: MetricsQuery): Promi
     const year = query.year ?? today.year;
     const month = query.period === "month" ? (query.month ?? today.month) : 1;
     const from =
-      query.period === "year" ? zonedTime(timezone, year, 1, 1) : zonedTime(timezone, year, month, 1);
+      query.period === "year"
+        ? zonedTime(timezone, year, 1, 1)
+        : zonedTime(timezone, year, month, 1);
     const to =
       query.period === "year"
         ? zonedTime(timezone, year + 1, 1, 1)

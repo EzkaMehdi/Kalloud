@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
+import { ContextBanner } from "@/components/context-banner";
 import { Shell } from "@/components/shell";
 import { ReceiptDialog } from "@/components/receipt-dialog";
 import { apiFetch } from "@/lib/client/api";
@@ -118,6 +119,43 @@ export default function Bilan() {
     [historyOffset, historyStatus],
   );
   const movementsQuery = useAsyncData(() => apiFetch<CashMovementRow[]>("/api/cash-movements"), []);
+  // BI-05: établissement et état du service, pour le bandeau de contexte —
+  // pas de nouvelle logique, deux lectures déjà réelles ailleurs
+  // (CFG-01 pour le nom, CASH-01 pour `businessDayOpen`).
+  const settingsQuery = useAsyncData(() => apiFetch<{ name: string }>("/api/settings"), []);
+  const cashSummaryQuery = useAsyncData(
+    () => apiFetch<{ businessDayOpen: boolean }>("/api/cash-summary"),
+    [],
+  );
+
+  // BI-05: "dernière synchronisation" — l'instant où l'un des trois widgets
+  // du Bilan a le plus récemment reçu des données fraîches du serveur, pas
+  // un chronomètre décoratif. Se met à jour à chaque succès, y compris un
+  // rafraîchissement déclenché par un remboursement (onRefunded plus bas).
+  // Même schéma que use-async-data.ts lui-même (setState conditionnel en
+  // phase de rendu plutôt que dans un effet, qui provoquerait un rendu en
+  // cascade) : comparer une signature des trois statuts à sa valeur suivie,
+  // et ne poser l'horodatage que lorsqu'elle change vers un succès.
+  const syncSignature = [
+    statsQuery.state.status,
+    ordersQuery.state.status,
+    movementsQuery.state.status,
+  ].join(",");
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [trackedSyncSignature, setTrackedSyncSignature] = useState(syncSignature);
+  if (trackedSyncSignature !== syncSignature) {
+    setTrackedSyncSignature(syncSignature);
+    if (syncSignature.includes("success")) {
+      setLastSyncedAt(new Date());
+    }
+  }
+
+  const periodLabel =
+    period === "Aujourd’hui"
+      ? "Service en cours"
+      : period === "Ce mois"
+        ? `Mois : ${months[month - 1]} ${year}`
+        : `Année : ${year}`;
 
   const eur = (value: string | number) => `${Number(value).toFixed(2).replace(".", ",")} €`;
   const dateFormatter = new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" });
@@ -130,6 +168,19 @@ export default function Bilan() {
           <h1>Le bilan</h1>
         </div>
       </div>
+
+      <ContextBanner
+        establishmentName={
+          settingsQuery.state.status === "success" ? settingsQuery.state.data.name : null
+        }
+        periodLabel={periodLabel}
+        serviceOpen={
+          cashSummaryQuery.state.status === "success"
+            ? cashSummaryQuery.state.data.businessDayOpen
+            : null
+        }
+        lastSyncedAt={lastSyncedAt}
+      />
 
       <div className="segmented" role="tablist" aria-label="Période">
         {(["Aujourd’hui", "Ce mois", "Cette année"] as const).map((option) => (

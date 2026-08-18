@@ -167,11 +167,38 @@ h2 {
   font-weight: 600;
   font-size: 12px;
 }
+/* BI-05: the same pill, muted — "no service open" is a normal, expected
+   state (before opening, or between two services), not an error. */
+.status.muted {
+  background: var(--sage);
+  color: var(--muted);
+}
 .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: currentColor;
+}
+/* BI-05: établissement / période / état du service / dernière synchronisation,
+   always shown together so a figure below is never read out of context. */
+.context-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 4px 0 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.context-item:not(.status) {
+  padding: 7px 0;
+}
+.context-establishment {
+  font-weight: 700;
+  color: var(--ink);
+}
+.context-sync {
+  margin-left: auto;
 }
 .icon-button,
 .soft-button,

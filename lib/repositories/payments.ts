@@ -99,6 +99,84 @@ export async function listPaymentsForOrder(
   return rows;
 }
 
+export interface PaymentHistoryRow extends PaymentRow {
+  order_number: number;
+}
+
+export interface PaymentHistoryFilters {
+  /** Inclusive lower bound on `created_at`. */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  method?: PaymentLineMethod;
+  type?: PaymentType;
+  limit: number;
+  offset: number;
+}
+
+export interface PaymentHistoryPage {
+  payments: PaymentHistoryRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * BI-02: "paiements" — every CHARGE and REFUND line across the
+ * establishment, filterable and paginated. `listPaymentsForOrder` (SALE-02)
+ * answers "what settled this one order"; this answers "what moved through
+ * the till this month", the question a cockpit's payments drill-down asks.
+ */
+export async function listPaymentsHistory(
+  db: Queryable,
+  locationId: number,
+  filters: PaymentHistoryFilters,
+): Promise<PaymentHistoryPage> {
+  const conditions = ["p.location_id = $1"];
+  const values: unknown[] = [locationId];
+
+  if (filters.from) {
+    values.push(filters.from);
+    conditions.push(`p.created_at >= $${values.length}`);
+  }
+  if (filters.to) {
+    values.push(filters.to);
+    conditions.push(`p.created_at < $${values.length}`);
+  }
+  if (filters.method) {
+    values.push(filters.method);
+    conditions.push(`p.method = $${values.length}`);
+  }
+  if (filters.type) {
+    values.push(filters.type);
+    conditions.push(`p.type = $${values.length}`);
+  }
+  const where = conditions.join(" AND ");
+
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT COUNT(*)::TEXT AS total FROM payments p WHERE ${where}`,
+    values,
+  );
+
+  const { rows } = await db.query<PaymentHistoryRow>(
+    `SELECT p.id, p.location_id, p.order_id, o.order_number, p.type, p.method, p.amount,
+            p.refunded_payment_id, p.created_by, p.created_at
+     FROM payments p
+     JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
+     WHERE ${where}
+     ORDER BY p.created_at DESC, p.id DESC
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, filters.limit, filters.offset],
+  );
+
+  return {
+    payments: rows,
+    total: Number(countRows[0].total),
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
 export interface NetPayments {
   cash: string;
   card: string;

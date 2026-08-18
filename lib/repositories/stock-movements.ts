@@ -132,3 +132,83 @@ export async function listStockMovements(
   );
   return rows;
 }
+
+export interface StockMovementHistoryRow extends StockMovementRow {
+  product_name: string;
+}
+
+export interface StockMovementHistoryFilters {
+  /** Inclusive lower bound on `created_at`. */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  productId?: number;
+  type?: StockMovementType;
+  limit: number;
+  offset: number;
+}
+
+export interface StockMovementHistoryPage {
+  movements: StockMovementHistoryRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * BI-02: "stock" — the establishment's whole ledger, filterable and
+ * paginated, across every product. `listStockMovements` (STK-01) answers
+ * "this one product's history", read by the stock screen's own detail view;
+ * this answers the cockpit's question, "what moved, for anything, this
+ * month" — a different access pattern (no single `product_id` to narrow on
+ * first), so its own indexed query rather than a loop over the other one.
+ */
+export async function listStockMovementsHistory(
+  db: Queryable,
+  locationId: number,
+  filters: StockMovementHistoryFilters,
+): Promise<StockMovementHistoryPage> {
+  const conditions = ["sm.location_id = $1"];
+  const values: unknown[] = [locationId];
+
+  if (filters.from) {
+    values.push(filters.from);
+    conditions.push(`sm.created_at >= $${values.length}`);
+  }
+  if (filters.to) {
+    values.push(filters.to);
+    conditions.push(`sm.created_at < $${values.length}`);
+  }
+  if (filters.productId) {
+    values.push(filters.productId);
+    conditions.push(`sm.product_id = $${values.length}`);
+  }
+  if (filters.type) {
+    values.push(filters.type);
+    conditions.push(`sm.type = $${values.length}`);
+  }
+  const where = conditions.join(" AND ");
+
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT COUNT(*)::TEXT AS total FROM stock_movements sm WHERE ${where}`,
+    values,
+  );
+
+  const { rows } = await db.query<StockMovementHistoryRow>(
+    `SELECT sm.id, sm.location_id, sm.product_id, p.name AS product_name, sm.quantity, sm.type,
+            sm.reason, sm.created_by, sm.reference_type, sm.reference_id, sm.created_at
+     FROM stock_movements sm
+     LEFT JOIN products p ON p.id = sm.product_id AND p.location_id = sm.location_id
+     WHERE ${where}
+     ORDER BY sm.created_at DESC, sm.id DESC
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, filters.limit, filters.offset],
+  );
+
+  return {
+    movements: rows,
+    total: Number(countRows[0].total),
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}

@@ -95,6 +95,81 @@ export async function listCashMovements(
   return rows;
 }
 
+export interface CashMovementHistoryFilters {
+  /** Inclusive lower bound on `created_at`. */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  type?: CashMovementType;
+  category?: StoredCashMovementCategory;
+  limit: number;
+  offset: number;
+}
+
+export interface CashMovementHistoryPage {
+  movements: CashMovementRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * BI-02: "caisse" — the establishment's whole movement history, filterable
+ * and paginated. `listCashMovements` (CASH-07) deliberately answers a
+ * narrower question — the *open service's own* journal, empty when none is
+ * open, because a live caisse screen showing yesterday's movements under
+ * today's balance would invite reading them as today's. A cockpit's
+ * historical drill-down asks the opposite question — "what happened last
+ * month" — so it is its own function rather than a widened CASH-07, which
+ * would have reintroduced exactly the ambiguity that task closed.
+ */
+export async function listCashMovementsHistory(
+  db: Queryable,
+  locationId: number,
+  filters: CashMovementHistoryFilters,
+): Promise<CashMovementHistoryPage> {
+  const conditions = ["location_id = $1"];
+  const values: unknown[] = [locationId];
+
+  if (filters.from) {
+    values.push(filters.from);
+    conditions.push(`created_at >= $${values.length}`);
+  }
+  if (filters.to) {
+    values.push(filters.to);
+    conditions.push(`created_at < $${values.length}`);
+  }
+  if (filters.type) {
+    values.push(filters.type);
+    conditions.push(`type = $${values.length}`);
+  }
+  if (filters.category) {
+    values.push(filters.category);
+    conditions.push(`category = $${values.length}`);
+  }
+  const where = conditions.join(" AND ");
+
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT COUNT(*)::TEXT AS total FROM cash_movements WHERE ${where}`,
+    values,
+  );
+
+  const { rows } = await db.query<CashMovementRow>(
+    `SELECT * FROM cash_movements
+      WHERE ${where}
+      ORDER BY created_at DESC, id DESC
+      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, filters.limit, filters.offset],
+  );
+
+  return {
+    movements: rows,
+    total: Number(countRows[0].total),
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
 /**
  * CASH-04: the expected cash in the drawer, and the terms it is made of.
  *

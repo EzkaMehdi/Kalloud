@@ -65,6 +65,27 @@ export const manualStockMovementTypeSchema = z.enum(MANUAL_STOCK_MOVEMENT_TYPES,
 });
 
 /**
+ * BI-02: the full six-type enumeration (DEC-06), for *filtering* stock
+ * history rather than recording a movement — reading "show me every SALE
+ * this month" forges nothing, unlike posting one. Kept distinct from
+ * `MANUAL_STOCK_MOVEMENT_TYPES` on purpose: the two enumerations answer
+ * different questions ("what may a human write" vs. "what may a human ask
+ * to see"), and merging them would let the narrower, write-side guarantee
+ * quietly erode the day someone reused it as a shortcut.
+ */
+export const ALL_STOCK_MOVEMENT_TYPES = [
+  "OPENING_BALANCE",
+  "SALE",
+  "RECEIPT",
+  "CORRECTION",
+  "LOSS",
+  "RETURN",
+] as const;
+export const stockMovementTypeFilterSchema = z.enum(ALL_STOCK_MOVEMENT_TYPES, {
+  error: "Type de mouvement de stock invalide.",
+});
+
+/**
  * Which way each type may move the balance, mirroring the `CHECK` in
  * `migrations/0007`. Duplicated here so a mismatch is a named field error
  * (API-01) instead of a constraint violation surfacing as a 500 — the
@@ -226,6 +247,32 @@ export const CASH_MOVEMENT_TYPES = ["IN", "OUT"] as const satisfies readonly Exc
 >[];
 export const cashMovementTypeSchema = z.enum(CASH_MOVEMENT_TYPES, {
   error: 'Type de mouvement invalide (attendu "IN" ou "OUT").',
+});
+
+/** BI-02: unlike `cashMovementTypeSchema`, filtering history may legitimately ask for `OPENING` rows too. */
+export const CASH_MOVEMENT_TYPE_FILTERS = [
+  "OPENING",
+  "IN",
+  "OUT",
+] as const satisfies readonly CashMovementType[];
+export const cashMovementTypeFilterSchema = z.enum(CASH_MOVEMENT_TYPE_FILTERS, {
+  error: 'Type de mouvement invalide (attendu "OPENING", "IN" ou "OUT").',
+});
+
+/**
+ * BI-02: a single payment *line*'s method, as recorded in the ledger —
+ * narrower than `paymentMethodSchema` above, which also accepts `MIXED` for
+ * an *order's* overall mix. No payment line is ever itself "mixed" (see
+ * `lib/repositories/payments.ts`'s own note on `PaymentLineMethod`).
+ */
+export const PAYMENT_LINE_METHODS = ["CASH", "CARD"] as const;
+export const paymentLineMethodSchema = z.enum(PAYMENT_LINE_METHODS, {
+  error: 'Moyen de paiement invalide (attendu "CASH" ou "CARD").',
+});
+
+export const PAYMENT_TYPES = ["CHARGE", "REFUND"] as const;
+export const paymentTypeSchema = z.enum(PAYMENT_TYPES, {
+  error: 'Type de paiement invalide (attendu "CHARGE" ou "REFUND").',
 });
 
 /**

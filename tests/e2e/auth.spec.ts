@@ -38,6 +38,18 @@ test.describe("authentication (SEC-03) and role-based navigation (SEC-05)", () =
 
     const response = await page.request.get("/api/dashboard");
     expect(response.status()).toBe(403);
+
+    // BI-02: the four history queries are reserved the same way, for the
+    // same reason (Phase 6 cockpit reporting, not day-to-day cashier work).
+    for (const path of [
+      "/api/sales",
+      "/api/payments",
+      "/api/cash-movements/history",
+      "/api/stock-movements",
+    ]) {
+      const historyResponse = await page.request.get(path);
+      expect(historyResponse.status(), path).toBe(403);
+    }
   });
 
   test("an invalid password shows an inline, accessible error without navigating away", async ({

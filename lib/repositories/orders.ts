@@ -125,6 +125,109 @@ export async function listOrders(
   return page.orders;
 }
 
+export interface SoldItemRow {
+  id: number;
+  order_id: number;
+  order_number: number;
+  table_name: string | null;
+  product_id: number;
+  /** The product's current name — order_items itself carries no snapshot of it (unlike price, DEC-05 never asked for one here). */
+  product_name: string;
+  quantity: number;
+  unit_price: string;
+  /** ORD-09: null for a line sold before migrations/0013, whose rate nobody recorded. */
+  tax_rate_percent: string | null;
+  /** ORD-11: this line's share of an order-level discount, 0.00 when none applied. */
+  discount_amount: string;
+  sold_at: string;
+}
+
+export interface SoldItemFilters {
+  /** Inclusive lower bound on `paid_at`. */
+  from?: string;
+  /** Exclusive upper bound. */
+  to?: string;
+  productId?: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SoldItemsPage {
+  items: SoldItemRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * BI-02: "ventes" — every line actually charged, across the establishment,
+ * filterable and paginated. Distinct from `listOrderHistory` (ORD-12), which
+ * is one row per *order*; this is one row per *product sold*, the
+ * granularity BI-08's later "ventilation par produit/catégorie" needs.
+ *
+ * Scoped through `orders.location_id`, never through `order_items` alone —
+ * the table carries no `location_id` column of its own (see
+ * migrations/0003_business_core.sql), so every read of it must join back to
+ * its parent order to stay tenant-scoped (SEC-06).
+ *
+ * `REFUNDED` orders are included deliberately: DEC-09's net-revenue formula
+ * nets a refund against the sale rather than erasing it, and a product-level
+ * sales report that silently dropped every later-refunded line would
+ * disagree with the order-level total it is supposed to explain.
+ * `CANCELLED` orders are excluded — nothing was ever charged for them.
+ */
+export async function listSoldItems(
+  db: Queryable,
+  locationId: number,
+  filters: SoldItemFilters,
+): Promise<SoldItemsPage> {
+  const conditions = ["o.location_id = $1", "o.status IN ('PAID', 'REFUNDED')"];
+  const values: unknown[] = [locationId];
+
+  if (filters.from) {
+    values.push(filters.from);
+    conditions.push(`o.paid_at >= $${values.length}`);
+  }
+  if (filters.to) {
+    values.push(filters.to);
+    conditions.push(`o.paid_at < $${values.length}`);
+  }
+  if (filters.productId) {
+    values.push(filters.productId);
+    conditions.push(`oi.product_id = $${values.length}`);
+  }
+  const where = conditions.join(" AND ");
+
+  const { rows: countRows } = await db.query<{ total: string }>(
+    `SELECT COUNT(*)::TEXT AS total
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     WHERE ${where}`,
+    values,
+  );
+
+  const { rows } = await db.query<SoldItemRow>(
+    `SELECT oi.id, oi.order_id, o.order_number, t.name AS table_name,
+            oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price,
+            oi.tax_rate_percent, oi.discount_amount, o.paid_at AS sold_at
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     LEFT JOIN products p ON p.id = oi.product_id AND p.location_id = o.location_id
+     LEFT JOIN dining_tables t ON t.id = o.table_id AND t.location_id = o.location_id
+     WHERE ${where}
+     ORDER BY o.paid_at DESC, oi.id DESC
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, filters.limit, filters.offset],
+  );
+
+  return {
+    items: rows,
+    total: Number(countRows[0].total),
+    limit: filters.limit,
+    offset: filters.offset,
+  };
+}
+
 /**
  * Hands out the next order number for a location, starting at 1 and never
  * reused or reset (ORD-01). Backed by a dedicated counter row rather than a

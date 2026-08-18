@@ -2,17 +2,21 @@ import { z } from "zod";
 import {
   CASH_MOVEMENT_CATEGORIES_BY_TYPE,
   cashMovementCategorySchema,
+  cashMovementTypeFilterSchema,
   cashMovementTypeSchema,
   dashboardPeriodSchema,
   emailSchema,
   idSchema,
   moneyAmountSchema,
   noteSchema,
+  paymentLineMethodSchema,
   paymentMethodSchema,
+  paymentTypeSchema,
   manualStockMovementTypeSchema,
   quantitySchema,
   STOCK_MOVEMENT_DIRECTION,
   stockDeltaSchema,
+  stockMovementTypeFilterSchema,
   reasonSchema,
   shortTextSchema,
   stockQuantitySchema,
@@ -487,6 +491,55 @@ export const orderHistoryQuerySchema = z.object({
     .default(0),
 });
 export type OrderHistoryQuery = z.infer<typeof orderHistoryQuerySchema>;
+
+/**
+ * BI-02: the four history queries (ventes, paiements, caisse, stock) share
+ * the same pagination shape as `orderHistoryQuerySchema` above — same
+ * bounds, same defaults — so a client written against one behaves
+ * predictably against the others.
+ */
+const historyPaginationSchema = {
+  from: z.iso.datetime({ offset: true, error: "Date de début invalide." }).optional(),
+  to: z.iso.datetime({ offset: true, error: "Date de fin invalide." }).optional(),
+  limit: z.coerce
+    .number({ error: "Limite invalide." })
+    .int({ error: "Limite invalide." })
+    .min(1, { error: "Limite invalide." })
+    .max(200, { error: "La limite ne peut pas dépasser 200." })
+    .default(20),
+  offset: z.coerce
+    .number({ error: "Décalage invalide." })
+    .int({ error: "Décalage invalide." })
+    .min(0, { error: "Décalage invalide." })
+    .default(0),
+};
+
+export const soldItemsQuerySchema = z.object({
+  ...historyPaginationSchema,
+  productId: z.coerce.number().pipe(idSchema).optional(),
+});
+export type SoldItemsQuery = z.infer<typeof soldItemsQuerySchema>;
+
+export const paymentsHistoryQuerySchema = z.object({
+  ...historyPaginationSchema,
+  method: paymentLineMethodSchema.optional(),
+  type: paymentTypeSchema.optional(),
+});
+export type PaymentsHistoryQuery = z.infer<typeof paymentsHistoryQuerySchema>;
+
+export const cashMovementsHistoryQuerySchema = z.object({
+  ...historyPaginationSchema,
+  type: cashMovementTypeFilterSchema.optional(),
+  category: cashMovementCategorySchema.optional(),
+});
+export type CashMovementsHistoryQuery = z.infer<typeof cashMovementsHistoryQuerySchema>;
+
+export const stockMovementsHistoryQuerySchema = z.object({
+  ...historyPaginationSchema,
+  productId: z.coerce.number().pipe(idSchema).optional(),
+  type: stockMovementTypeFilterSchema.optional(),
+});
+export type StockMovementsHistoryQuery = z.infer<typeof stockMovementsHistoryQuerySchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Establishment configuration (CFG-01 / CFG-02 / CFG-03)                      */

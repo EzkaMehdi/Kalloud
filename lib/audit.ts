@@ -82,7 +82,7 @@ export async function listAuditEvents(
     `SELECT id, location_id, actor_user_id, action, target_type, target_id, before_data, after_data, created_at
      FROM audit_events
      WHERE location_id = $1
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC, id DESC
      LIMIT $2`,
     [locationId, limit],
   );

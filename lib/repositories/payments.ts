@@ -93,7 +93,7 @@ export async function listPaymentsForOrder(
     `SELECT id, location_id, order_id, type, method, amount, refunded_payment_id, created_by, created_at
      FROM payments
      WHERE location_id = $1 AND order_id = $2
-     ORDER BY created_at`,
+     ORDER BY created_at, id`,
     [locationId, orderId],
   );
   return rows;

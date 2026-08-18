@@ -89,7 +89,7 @@ export async function listCashMovements(
   const { rows } = await db.query<CashMovementRow>(
     `SELECT * FROM cash_movements
       WHERE location_id = $1 AND ($2::INT IS NULL OR business_day_id = $2)
-      ORDER BY created_at DESC LIMIT $3`,
+      ORDER BY created_at DESC, id DESC LIMIT $3`,
     [locationId, businessDayId ?? null, limit],
   );
   return rows;

@@ -126,7 +126,7 @@ export async function listStockMovements(
             reference_type, reference_id, created_at
      FROM stock_movements
      WHERE location_id = $1 AND product_id = $2
-     ORDER BY created_at DESC
+     ORDER BY created_at DESC, id DESC
      LIMIT $3`,
     [locationId, productId, limit],
   );

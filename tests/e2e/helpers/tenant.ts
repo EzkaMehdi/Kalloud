@@ -72,6 +72,24 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
       await expect(page).toHaveURL(/\/caisse$/);
     },
     async dispose() {
+      // Historical, financial and stock rows are deliberately NOT
+      // cascade-deletable from `products`/`orders` (CFG-02/DEC-05/DEC-06:
+      // this codebase never deletes sold history, only deactivates or
+      // reverses it) — so a location that ever completed a real sale or a
+      // stock operation has to be torn down in the order its own FOREIGN
+      // KEY constraints require, not in one cascading statement from
+      // `organizations`. `stock_counts` first: it references both
+      // `products` and `stock_movements` (the CORRECTION a count
+      // produced), so it has to go before either. Then `stock_movements`
+      // itself (references `products`), then `payments` (references
+      // `orders`), then `orders` — which *does* cascade to `order_items`
+      // via its own ON DELETE CASCADE. Only once all of that is gone does
+      // the remaining cascade from `organizations` (locations, products,
+      // categories) meet nothing still pointing at what it deletes.
+      await pool.query("DELETE FROM stock_counts WHERE location_id = $1", [location.id]);
+      await pool.query("DELETE FROM stock_movements WHERE location_id = $1", [location.id]);
+      await pool.query("DELETE FROM payments WHERE location_id = $1", [location.id]);
+      await pool.query("DELETE FROM orders WHERE location_id = $1", [location.id]);
       await pool.query("DELETE FROM organizations WHERE id = $1", [org.id]);
       await pool.end();
     },

@@ -212,6 +212,26 @@ export async function getLastNextOpeningCash(
   return rows[0]?.next_opening_cash ?? null;
 }
 
+/**
+ * BI-01/DEC-09: "Écart de caisse ... à la clôture" — an instantaneous read
+ * of the most recent reconciliation, not an aggregate over a period. Mirrors
+ * `getLastNextOpeningCash` above, one row earlier in the same query shape,
+ * but returns the whole row: the cockpit needs `cash_variance` *and* when it
+ * was closed, not just the one field that feeds the next opening.
+ */
+export async function getLastClosedBusinessDay(
+  db: Queryable,
+  locationId: number,
+): Promise<BusinessDayRow | null> {
+  const { rows } = await db.query<BusinessDayRow>(
+    `SELECT * FROM business_days
+      WHERE location_id = $1 AND status = 'CLOSED'
+      ORDER BY closed_at DESC LIMIT 1`,
+    [locationId],
+  );
+  return rows[0] ?? null;
+}
+
 export async function openBusinessDay(
   db: Queryable,
   locationId: number,

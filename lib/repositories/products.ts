@@ -92,6 +92,42 @@ export async function listProducts(
   return rows;
 }
 
+export interface StockAlertCounts {
+  out_of_stock: number;
+  low_stock: number;
+}
+
+/**
+ * BI-01/DEC-09: "Alerte de rupture" (stock_quantity = 0 sur un produit actif)
+ * and "Alerte de seuil" (0 < stock_quantity <= alert_threshold), as one
+ * counted figure per establishment. Deliberately its own query rather than
+ * derived from `listProducts` client-side: STK-08's badges answer "which
+ * rows", the cockpit needs "how many" as a tested value in its own right,
+ * and computing it here means both can never disagree about what counts as
+ * a rupture or a low-stock line.
+ */
+export async function getStockAlertCounts(
+  db: Queryable,
+  locationId: number,
+): Promise<StockAlertCounts> {
+  const { rows } = await db.query<{ out_of_stock: string; low_stock: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE stock_quantity = 0) AS out_of_stock,
+       COUNT(*) FILTER (
+         WHERE stock_quantity > 0 AND stock_quantity <= alert_threshold
+       ) AS low_stock
+     FROM products
+     WHERE location_id = $1 AND is_active`,
+    [locationId],
+  );
+  // COUNT(...) FILTER returns bigint, which the pg driver hands back as a
+  // string — true of every aggregate on this connection already.
+  return {
+    out_of_stock: Number(rows[0].out_of_stock),
+    low_stock: Number(rows[0].low_stock),
+  };
+}
+
 export interface SaleProductPricing {
   id: number;
   name: string;

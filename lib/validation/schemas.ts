@@ -541,6 +541,55 @@ export const stockMovementsHistoryQuerySchema = z.object({
 });
 export type StockMovementsHistoryQuery = z.infer<typeof stockMovementsHistoryQuerySchema>;
 
+/**
+ * BI-03: "aucun filtre visible s'il est ignoré" — a discriminated union
+ * (one `z.strictObject` per period) rather than one object with every
+ * field optional. `?period=year&day=12` is a 400 naming `day` as
+ * unrecognised, not a silently ignored parameter that could mislead a
+ * caller into thinking it narrowed anything. Mirrors
+ * `lib/services/metrics.ts::MetricsQuery` field-for-field.
+ */
+const yearField = z.coerce
+  .number({ error: "Année invalide." })
+  .int({ error: "Année invalide." })
+  .min(2000, { error: "Année invalide." })
+  .max(2100, { error: "Année invalide." })
+  .optional();
+const monthField = z.coerce
+  .number({ error: "Mois invalide." })
+  .int({ error: "Mois invalide." })
+  .min(1, { error: "Mois invalide." })
+  .max(12, { error: "Mois invalide." })
+  .optional();
+
+export const metricsQuerySchema = z.discriminatedUnion("period", [
+  z.strictObject({ period: z.literal("service") }),
+  z.strictObject({
+    period: z.literal("day"),
+    year: yearField,
+    month: monthField,
+    day: z.coerce
+      .number({ error: "Jour invalide." })
+      .int({ error: "Jour invalide." })
+      .min(1, { error: "Jour invalide." })
+      .max(31, { error: "Jour invalide." })
+      .optional(),
+  }),
+  z.strictObject({ period: z.literal("month"), year: yearField, month: monthField }),
+  z.strictObject({ period: z.literal("year"), year: yearField }),
+  z
+    .strictObject({
+      period: z.literal("range"),
+      from: z.iso.datetime({ offset: true, error: "Date de début invalide." }),
+      to: z.iso.datetime({ offset: true, error: "Date de fin invalide." }),
+    })
+    .refine(({ from, to }) => new Date(from) <= new Date(to), {
+      error: "La date de début doit précéder la date de fin.",
+      path: ["from"],
+    }),
+]);
+export type MetricsQueryInput = z.infer<typeof metricsQuerySchema>;
+
 /* -------------------------------------------------------------------------- */
 /* Establishment configuration (CFG-01 / CFG-02 / CFG-03)                      */
 /* -------------------------------------------------------------------------- */

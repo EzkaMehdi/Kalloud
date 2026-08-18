@@ -24,6 +24,7 @@ import {
   createCashMovementSchema,
   createProductSchema,
   dashboardQuerySchema,
+  metricsQuerySchema,
   saveTicketItemsSchema,
   updateDiningTableSchema,
   updateProductSchema,
@@ -417,6 +418,41 @@ describe("API-01: catalog, floor plan and cash payloads", () => {
     // Previously `?period=nonsense` silently fell back to "day".
     expect(accepts(dashboardQuerySchema, { period: "nonsense" })).toBe(false);
     expect(accepts(dashboardQuerySchema, { month: "99" })).toBe(false);
+  });
+
+  it("BI-03: accepts exactly the fields each metrics period uses, and nothing else", () => {
+    expect(accepts(metricsQuerySchema, { period: "service" })).toBe(true);
+    expect(accepts(metricsQuerySchema, { period: "day" })).toBe(true);
+    expect(accepts(metricsQuerySchema, { period: "month", year: "2026", month: "3" })).toBe(true);
+    expect(accepts(metricsQuerySchema, { period: "year", year: "2026" })).toBe(true);
+    expect(
+      accepts(metricsQuerySchema, {
+        period: "range",
+        from: "2026-01-01T00:00:00+01:00",
+        to: "2026-01-02T00:00:00+01:00",
+      }),
+    ).toBe(true);
+
+    // A field the period would silently ignore is refused rather than
+    // accepted and dropped — "aucun filtre visible s'il est ignoré".
+    expect(accepts(metricsQuerySchema, { period: "service", year: "2026" })).toBe(false);
+    expect(accepts(metricsQuerySchema, { period: "year", year: "2026", day: "12" })).toBe(false);
+    expect(
+      accepts(metricsQuerySchema, { period: "month", from: "2026-01-01T00:00:00+01:00" }),
+    ).toBe(false);
+
+    // A range with no honest default: both bounds are required, and the
+    // pair must not be inverted.
+    expect(accepts(metricsQuerySchema, { period: "range", from: "2026-01-01T00:00:00+01:00" })).toBe(
+      false,
+    );
+    expect(
+      accepts(metricsQuerySchema, {
+        period: "range",
+        from: "2026-01-02T00:00:00+01:00",
+        to: "2026-01-01T00:00:00+01:00",
+      }),
+    ).toBe(false);
   });
 });
 

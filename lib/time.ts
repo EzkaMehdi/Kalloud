@@ -61,14 +61,25 @@ export function zonedTime(
   return instant;
 }
 
-/** Today's calendar date as seen in `timeZone`. */
-export function zonedToday(timeZone: string, now = new Date()): { year: number; month: number } {
+/**
+ * Today's calendar date as seen in `timeZone`. `day` was added by BI-03,
+ * which needs to default a specific-day query to "today" the same way
+ * `month`/`year` queries already default to the current month/year —
+ * additive on the return shape, so existing callers destructuring only
+ * `{ year, month }` are unaffected.
+ */
+export function zonedToday(
+  timeZone: string,
+  now = new Date(),
+): { year: number; month: number; day: number } {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
+    day: "2-digit",
   }).formatToParts(now);
   const year = Number(parts.find((part) => part.type === "year")?.value);
   const month = Number(parts.find((part) => part.type === "month")?.value);
-  return { year, month };
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+  return { year, month, day };
 }

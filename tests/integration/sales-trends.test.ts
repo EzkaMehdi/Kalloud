@@ -3,7 +3,7 @@ import { pool } from "../../lib/db";
 import { openBusinessDay } from "../../lib/repositories/business-days";
 import { createDiningTable } from "../../lib/repositories/tables";
 import { createProduct } from "../../lib/repositories/products";
-import { getSalesTrends } from "../../lib/services/trends";
+import { getSalesTrends, getSalesTrendsForPeriod } from "../../lib/services/trends";
 import { openOrResumeTableTicket, saveTicketItems } from "../../lib/services/tickets";
 import { performCheckout } from "../../lib/services/checkout";
 import { refundOrder } from "../../lib/services/refunds";
@@ -259,5 +259,72 @@ describe("BI-08: tenant isolation", () => {
     expect(result.byProduct).toHaveLength(0);
     expect(result.byCategory).toHaveLength(0);
     expect(result.tableTurnover).toHaveLength(0);
+  });
+});
+
+/**
+ * BI-11: `getSalesTrendsForPeriod` resolves `MetricsQuery` (`BI-03`'s five
+ * period kinds, reduced here to the three the cockpit's own selector offers)
+ * through `getMetrics`'s own resolution, not a second one — these cases
+ * prove that reuse actually holds a real sale, not just that the window
+ * math would agree in the abstract.
+ */
+describe("BI-11: getSalesTrendsForPeriod", () => {
+  it("answers null for period=service when no business day is open", async () => {
+    const result = await getSalesTrendsForPeriod(tenant.locationId, { period: "service" });
+    expect(result).toBeNull();
+  });
+
+  it("period=service covers exactly since the open day started, up to now", async () => {
+    await openBusinessDay(pool, tenant.locationId, "0.00");
+    const product = await createProduct(pool, tenant.locationId, {
+      categoryId: null,
+      name: "Café",
+      price: "5.00",
+      stockQuantity: 50,
+    });
+    await sell(context, [{ productId: product.id, quantity: 2 }], { paymentMethod: "CASH" }); // 10.00
+
+    const result = await getSalesTrendsForPeriod(tenant.locationId, { period: "service" });
+
+    expect(result).not.toBeNull();
+    const row = result?.byProduct.find((entry) => entry.product_id === product.id);
+    expect(row).toMatchObject({ quantity: 2, revenue: "10.00" });
+  });
+
+  it("period=month resolves the calendar month boundary, excluding a sale outside it", async () => {
+    await openBusinessDay(pool, tenant.locationId, "0.00");
+    const product = await createProduct(pool, tenant.locationId, {
+      categoryId: null,
+      name: "Café",
+      price: "5.00",
+      stockQuantity: 50,
+    });
+    const inMonth = await sell(context, [{ productId: product.id, quantity: 1 }], {
+      paymentMethod: "CASH",
+    });
+    await setOrderTiming(
+      inMonth.order.id,
+      new Date("2026-03-15T12:00:00+01:00"),
+      new Date("2026-03-15T12:00:00+01:00"),
+    );
+    const outsideMonth = await sell(context, [{ productId: product.id, quantity: 5 }], {
+      paymentMethod: "CASH",
+    });
+    await setOrderTiming(
+      outsideMonth.order.id,
+      new Date("2026-04-01T00:30:00+01:00"),
+      new Date("2026-04-01T00:30:00+01:00"),
+    );
+
+    const result = await getSalesTrendsForPeriod(tenant.locationId, {
+      period: "month",
+      year: 2026,
+      month: 3,
+    });
+
+    expect(result).not.toBeNull();
+    const row = result?.byProduct.find((entry) => entry.product_id === product.id);
+    expect(row).toMatchObject({ quantity: 1, revenue: "5.00" });
   });
 });

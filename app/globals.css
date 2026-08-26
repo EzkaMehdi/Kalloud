@@ -904,6 +904,18 @@ dialog.sheet::backdrop {
   color: var(--ink);
   letter-spacing: 0;
 }
+/* BI-11: the comparison and cash-reconciliation blocks' percent/écart
+   badge — same red/green convention as .order-row's own b.out/b.in. */
+.delta {
+  font-size: 12px;
+  font-weight: 700;
+}
+.delta.up {
+  color: #347c4d;
+}
+.delta.down {
+  color: var(--red);
+}
 .order-row {
   padding: 14px 15px;
   border-bottom: 1px solid var(--line);

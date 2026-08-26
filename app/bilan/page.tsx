@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
+import { CashReconciliationBlock } from "@/components/cash-reconciliation-block";
 import { ContextBanner } from "@/components/context-banner";
+import { PerformanceComparisonBlock } from "@/components/performance-comparison-block";
+import { SalesTrendsBlock } from "@/components/sales-trends-block";
 import { Shell } from "@/components/shell";
 import { ReceiptDialog } from "@/components/receipt-dialog";
 import { StockRiskBlock } from "@/components/stock-risk-block";
@@ -114,6 +117,14 @@ export default function Bilan() {
   const [year, setYear] = useState(now.getFullYear());
 
   const periodKey = period === "Aujourd’hui" ? "day" : period === "Ce mois" ? "month" : "year";
+  // BI-11: `lib/services/metrics.ts::MetricsQuery`'s own period kinds
+  // (`BI-03`), not `periodKey` above — the older `/api/dashboard` still
+  // means "the open business day" by `"day"`, while the comparison/trends
+  // blocks take the honestly-named `"service"` for the same tab. Same
+  // "Aujourd'hui" segment, two call sites, each naming what it actually
+  // means rather than the newer ones adopting the older, conflated name.
+  const metricsPeriod =
+    period === "Aujourd’hui" ? "service" : period === "Ce mois" ? "month" : "year";
   const statsQuery = useAsyncData(
     () =>
       apiFetch<DashboardStats>(`/api/dashboard?period=${periodKey}&month=${month}&year=${year}`),
@@ -316,6 +327,8 @@ export default function Bilan() {
         )}
       </AsyncSection>
 
+      <PerformanceComparisonBlock period={metricsPeriod} year={year} month={month} />
+
       <div className="section-title">
         <div>
           <h2>Commandes récentes</h2>
@@ -405,12 +418,18 @@ export default function Bilan() {
         )}
       </AsyncSection>
 
-      {/* BI-10: sits between "Commandes récentes" and "Journal de caisse" —
-          both those sections rely on their own row/card being the first
-          ".order-row" and the last ".history-card" on the page
-          (bilan-real-data.spec.ts and friends), classes this block reuses
-          for its own rows. Between the two is the one spot that disturbs
-          neither. */}
+      {/* BI-10/BI-11: sit between "Commandes récentes" and "Journal de
+          caisse" — both those sections rely on their own row/card being the
+          first ".order-row" and the last ".history-card" on the page
+          (bilan-real-data.spec.ts and friends), classes SalesTrendsBlock and
+          StockRiskBlock both reuse for their own rows. Between the two is
+          the one spot that disturbs neither. CashReconciliationBlock uses
+          neither class (`.kpis` only) and would be safe anywhere, but sits
+          here too, next to the journal it explains. */}
+      <SalesTrendsBlock period={metricsPeriod} year={year} month={month} />
+
+      <CashReconciliationBlock />
+
       <StockRiskBlock />
 
       <div className="section-title">

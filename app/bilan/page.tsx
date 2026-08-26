@@ -6,6 +6,7 @@ import { AsyncSection } from "@/components/ui/async-section";
 import { ContextBanner } from "@/components/context-banner";
 import { Shell } from "@/components/shell";
 import { ReceiptDialog } from "@/components/receipt-dialog";
+import { StockRiskBlock } from "@/components/stock-risk-block";
 import { apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
 import { useCurrentUser } from "@/lib/client/use-current-user";
@@ -403,6 +404,14 @@ export default function Bilan() {
           </div>
         )}
       </AsyncSection>
+
+      {/* BI-10: sits between "Commandes récentes" and "Journal de caisse" —
+          both those sections rely on their own row/card being the first
+          ".order-row" and the last ".history-card" on the page
+          (bilan-real-data.spec.ts and friends), classes this block reuses
+          for its own rows. Between the two is the one spot that disturbs
+          neither. */}
+      <StockRiskBlock />
 
       <div className="section-title">
         <div>

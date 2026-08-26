@@ -128,6 +128,35 @@ export async function getStockAlertCounts(
   };
 }
 
+export interface StockRiskRow {
+  id: number;
+  name: string;
+  stock_quantity: number;
+  alert_threshold: number;
+  category_name: string | null;
+}
+
+/**
+ * BI-10: the actual rows behind `getStockAlertCounts`' two figures — a
+ * manager needs to know *which* products, not just how many, to act on
+ * them. `stock_quantity <= alert_threshold` alone captures both buckets
+ * (a rupture's `stock_quantity = 0` is always `<= alert_threshold`, which
+ * `stockQuantitySchema` never lets go negative) — split into the two
+ * lists in JS by that same test, kept as one query so the two counts and
+ * these two lists can never disagree about which row belongs where.
+ */
+export async function listStockAtRisk(db: Queryable, locationId: number): Promise<StockRiskRow[]> {
+  const { rows } = await db.query<StockRiskRow>(
+    `SELECT p.id, p.name, p.stock_quantity, p.alert_threshold, c.name AS category_name
+     FROM products p
+     LEFT JOIN categories c ON c.id = p.category_id AND c.location_id = p.location_id
+     WHERE p.location_id = $1 AND p.is_active AND p.stock_quantity <= p.alert_threshold
+     ORDER BY p.stock_quantity ASC, p.name`,
+    [locationId],
+  );
+  return rows;
+}
+
 export interface SaleProductPricing {
   id: number;
   name: string;

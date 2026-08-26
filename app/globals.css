@@ -927,6 +927,14 @@ dialog.sheet::backdrop {
   font-size: 14px;
   color: var(--forest);
 }
+/* BI-10: same severity colours as .movement's own b.in/b.out, reused for
+   the stock-at-risk block's "Rupture" / "N restants" badge. */
+.order-row b.out {
+  color: var(--red);
+}
+.order-row b.in {
+  color: #347c4d;
+}
 .movement {
   display: flex;
   justify-content: space-between;

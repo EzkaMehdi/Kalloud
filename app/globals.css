@@ -246,6 +246,17 @@ h2 {
   gap: 8px;
   font-weight: 700;
 }
+/* BI-12: `.outline-button` styles a <button> everywhere else it is used;
+   ExportsSection applies it to an <a> instead (a real download navigation,
+   not a click handler), which needs the anchor's own defaults reset. */
+a.outline-button {
+  text-decoration: none;
+}
+.exports-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .input {
   width: 100%;
   min-height: 48px;

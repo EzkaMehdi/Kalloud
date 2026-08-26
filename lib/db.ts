@@ -62,3 +62,35 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
 export async function pingDatabase(): Promise<void> {
   await pool.query("SELECT 1");
 }
+
+/**
+ * BI-12: every `list*History`/`listSoldItems` repository function (`BI-02`)
+ * takes an optional `limit`/`offset` — present, they paginate exactly as
+ * before; both absent, the query returns every row the filter matches, the
+ * shape `BI-12`'s CSV export needs (a page-schema's own `limit` is capped at
+ * 200, far short of "everything this quarter"). One shared builder rather
+ * than the same `if (limit !== undefined) { push; append "LIMIT $n" }`
+ * written out in each of the four functions, which is exactly the kind of
+ * near-duplicate this codebase's own "one formula" principle exists to
+ * catch, even for a concern this small.
+ *
+ * Mutates `values` (appends the bound parameters in place, matching how
+ * every repository function here already builds its own parameter array)
+ * and returns the SQL fragment to append after `ORDER BY`.
+ */
+export function buildLimitOffsetClause(
+  values: unknown[],
+  limit: number | undefined,
+  offset: number | undefined,
+): string {
+  let clause = "";
+  if (limit !== undefined) {
+    values.push(limit);
+    clause += ` LIMIT $${values.length}`;
+  }
+  if (offset !== undefined) {
+    values.push(offset);
+    clause += ` OFFSET $${values.length}`;
+  }
+  return clause;
+}

@@ -94,6 +94,22 @@ export function jsonOk<T>(data: T, init?: { status?: number }): NextResponse {
   return NextResponse.json(data, { status: init?.status ?? 200 });
 }
 
+/**
+ * BI-12: a CSV export response — `Content-Disposition: attachment` so the
+ * browser saves it rather than trying to render `text/csv` inline, and
+ * `charset=utf-8` stated explicitly even though `DEC-09`'s own BOM
+ * (`lib/csv.ts`) already lets a reader that ignores the header detect it.
+ */
+export function csvOk(csv: string, filename: string): NextResponse {
+  return new NextResponse(csv, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
 const DEFAULT_MAX_BODY_BYTES = 100_000; // 100kB is generous for this app's JSON payloads (SEC-07 body limits).
 
 /**

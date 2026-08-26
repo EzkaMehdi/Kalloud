@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
 import { CashReconciliationBlock } from "@/components/cash-reconciliation-block";
 import { ContextBanner } from "@/components/context-banner";
+import { ExportsSection } from "@/components/exports-section";
 import { PerformanceComparisonBlock } from "@/components/performance-comparison-block";
 import { SalesTrendsBlock } from "@/components/sales-trends-block";
 import { Shell } from "@/components/shell";
@@ -111,6 +112,12 @@ export default function Bilan() {
   // DEC-07: `orders:refund` is OWNER/MANAGER. A cashier still sees the
   // receipt — they hand it to the customer — but not the refund action.
   const canRefund = user?.role === "OWNER" || user?.role === "MANAGER";
+  // BI-12: the four export routes are `dashboard:view` (same OWNER/MANAGER
+  // scope) — hiding the links themselves for anyone else avoids a plain
+  // navigation ever landing a cashier on a raw 403 JSON body instead of
+  // this page's own error state, which every other block on this screen
+  // handles through `AsyncSection` but a browser download cannot.
+  const canExport = user?.role === "OWNER" || user?.role === "MANAGER";
 
   const [period, setPeriod] = useState<"Aujourd’hui" | "Ce mois" | "Cette année">("Aujourd’hui");
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -468,6 +475,8 @@ export default function Bilan() {
           </div>
         )}
       </AsyncSection>
+
+      {canExport && <ExportsSection />}
 
       {receiptOrderId !== null && (
         <ReceiptDialog

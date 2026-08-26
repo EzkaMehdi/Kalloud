@@ -62,6 +62,40 @@ export function zonedTime(
 }
 
 /**
+ * BI-12: `instant` written as local wall-clock time in `timeZone`, with an
+ * explicit numeric offset (`2026-08-04T19:30:00+02:00`) — the exact shape
+ * `DEC-09`'s CSV export format requires, and deliberately not
+ * `Date.prototype.toISOString()`, which only ever produces UTC (`Z`) and
+ * would leave a reader of the export doing the timezone arithmetic
+ * themselves for every single row.
+ */
+export function formatZonedIso(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(instant);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  // Same midnight quirk `offsetMs` above already works around: some ICU
+  // builds render midnight as hour "24" rather than "00" under `hour12:
+  // false`.
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  const local = `${get("year")}-${get("month")}-${get("day")}T${hour}:${get("minute")}:${get("second")}`;
+
+  const offsetMinutes = Math.round(offsetMs(instant, timeZone) / 60_000);
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absMinutes = Math.abs(offsetMinutes);
+  const offsetHours = String(Math.floor(absMinutes / 60)).padStart(2, "0");
+  const offsetRemainder = String(absMinutes % 60).padStart(2, "0");
+  return `${local}${sign}${offsetHours}:${offsetRemainder}`;
+}
+
+/**
  * Today's calendar date as seen in `timeZone`. `day` was added by BI-03,
  * which needs to default a specific-day query to "today" the same way
  * `month`/`year` queries already default to the current month/year —

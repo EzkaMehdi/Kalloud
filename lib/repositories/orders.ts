@@ -1,4 +1,4 @@
-import type { Queryable } from "../db";
+import { buildLimitOffsetClause, type Queryable } from "../db";
 
 export interface OrderListRow {
   id: number;
@@ -148,15 +148,20 @@ export interface SoldItemFilters {
   /** Exclusive upper bound. */
   to?: string;
   productId?: number;
-  limit: number;
-  offset: number;
+  /**
+   * BI-12: both omitted (rather than one given and not the other) returns
+   * every matching row — the CSV export's own use, which has no page to
+   * ask for. Every JSON-facing caller still passes both, exactly as before.
+   */
+  limit?: number;
+  offset?: number;
 }
 
 export interface SoldItemsPage {
   items: SoldItemRow[];
   total: number;
-  limit: number;
-  offset: number;
+  limit: number | null;
+  offset: number | null;
 }
 
 /**
@@ -206,6 +211,11 @@ export async function listSoldItems(
     values,
   );
 
+  // A copy, not `values` itself: the COUNT query above already bound that
+  // array, and `buildLimitOffsetClause` mutates whatever array it is given.
+  const mainValues = [...values];
+  const limitClause = buildLimitOffsetClause(mainValues, filters.limit, filters.offset);
+
   const { rows } = await db.query<SoldItemRow>(
     `SELECT oi.id, oi.order_id, o.order_number, t.name AS table_name,
             oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price,
@@ -215,16 +225,15 @@ export async function listSoldItems(
      LEFT JOIN products p ON p.id = oi.product_id AND p.location_id = o.location_id
      LEFT JOIN dining_tables t ON t.id = o.table_id AND t.location_id = o.location_id
      WHERE ${where}
-     ORDER BY o.paid_at DESC, oi.id DESC
-     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-    [...values, filters.limit, filters.offset],
+     ORDER BY o.paid_at DESC, oi.id DESC${limitClause}`,
+    mainValues,
   );
 
   return {
     items: rows,
     total: Number(countRows[0].total),
-    limit: filters.limit,
-    offset: filters.offset,
+    limit: filters.limit ?? null,
+    offset: filters.offset ?? null,
   };
 }
 

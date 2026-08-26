@@ -1,4 +1,4 @@
-import type { Queryable } from "../db";
+import { buildLimitOffsetClause, type Queryable } from "../db";
 import { NotFoundError } from "../errors";
 import type { CashMovementCategory } from "../validation/primitives";
 
@@ -102,15 +102,16 @@ export interface CashMovementHistoryFilters {
   to?: string;
   type?: CashMovementType;
   category?: StoredCashMovementCategory;
-  limit: number;
-  offset: number;
+  /** BI-12: both omitted returns every matching row (the CSV export's own use) — see `orders.ts::SoldItemFilters`'s own note. */
+  limit?: number;
+  offset?: number;
 }
 
 export interface CashMovementHistoryPage {
   movements: CashMovementRow[];
   total: number;
-  limit: number;
-  offset: number;
+  limit: number | null;
+  offset: number | null;
 }
 
 /**
@@ -154,19 +155,21 @@ export async function listCashMovementsHistory(
     values,
   );
 
+  const mainValues = [...values];
+  const limitClause = buildLimitOffsetClause(mainValues, filters.limit, filters.offset);
+
   const { rows } = await db.query<CashMovementRow>(
     `SELECT * FROM cash_movements
       WHERE ${where}
-      ORDER BY created_at DESC, id DESC
-      LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-    [...values, filters.limit, filters.offset],
+      ORDER BY created_at DESC, id DESC${limitClause}`,
+    mainValues,
   );
 
   return {
     movements: rows,
     total: Number(countRows[0].total),
-    limit: filters.limit,
-    offset: filters.offset,
+    limit: filters.limit ?? null,
+    offset: filters.offset ?? null,
   };
 }
 

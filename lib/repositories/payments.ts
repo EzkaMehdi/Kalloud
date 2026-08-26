@@ -1,4 +1,4 @@
-import type { Queryable } from "../db";
+import { buildLimitOffsetClause, type Queryable } from "../db";
 
 export type PaymentType = "CHARGE" | "REFUND";
 /**
@@ -110,15 +110,16 @@ export interface PaymentHistoryFilters {
   to?: string;
   method?: PaymentLineMethod;
   type?: PaymentType;
-  limit: number;
-  offset: number;
+  /** BI-12: both omitted returns every matching row (the CSV export's own use) — see `orders.ts::SoldItemFilters`'s own note. */
+  limit?: number;
+  offset?: number;
 }
 
 export interface PaymentHistoryPage {
   payments: PaymentHistoryRow[];
   total: number;
-  limit: number;
-  offset: number;
+  limit: number | null;
+  offset: number | null;
 }
 
 /**
@@ -158,22 +159,24 @@ export async function listPaymentsHistory(
     values,
   );
 
+  const mainValues = [...values];
+  const limitClause = buildLimitOffsetClause(mainValues, filters.limit, filters.offset);
+
   const { rows } = await db.query<PaymentHistoryRow>(
     `SELECT p.id, p.location_id, p.order_id, o.order_number, p.type, p.method, p.amount,
             p.refunded_payment_id, p.created_by, p.created_at
      FROM payments p
      JOIN orders o ON o.id = p.order_id AND o.location_id = p.location_id
      WHERE ${where}
-     ORDER BY p.created_at DESC, p.id DESC
-     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-    [...values, filters.limit, filters.offset],
+     ORDER BY p.created_at DESC, p.id DESC${limitClause}`,
+    mainValues,
   );
 
   return {
     payments: rows,
     total: Number(countRows[0].total),
-    limit: filters.limit,
-    offset: filters.offset,
+    limit: filters.limit ?? null,
+    offset: filters.offset ?? null,
   };
 }
 

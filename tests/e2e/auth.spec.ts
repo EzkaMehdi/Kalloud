@@ -41,11 +41,16 @@ test.describe("authentication (SEC-03) and role-based navigation (SEC-05)", () =
 
     // BI-02: the four history queries are reserved the same way, for the
     // same reason (Phase 6 cockpit reporting, not day-to-day cashier work).
+    // BI-12: their CSV export counterparts, same reservation.
     for (const path of [
       "/api/sales",
       "/api/payments",
       "/api/cash-movements/history",
       "/api/stock-movements",
+      "/api/exports/sales",
+      "/api/exports/payments",
+      "/api/exports/cash",
+      "/api/exports/stock",
     ]) {
       const historyResponse = await page.request.get(path);
       expect(historyResponse.status(), path).toBe(403);

@@ -13,7 +13,7 @@ import {
   type TableTurnoverRow,
 } from "../repositories/trends";
 import { getLocationSettings } from "../repositories/settings";
-import { getMetrics, type MetricsQuery } from "./metrics";
+import { resolvePeriodRange, type MetricsQuery } from "./metrics";
 
 /**
  * BI-08: "évolution heure/jour, ventes par catégorie/produit, rotation des
@@ -84,40 +84,19 @@ export async function getSalesTrends(
  * depends on `BI-02`/`ORD-12`, not `BI-03`) — but the cockpit's period
  * selector (service en cours / mois / année) is `lib/services/metrics.ts`'s
  * `MetricsQuery`. Rather than a second, bespoke translation of "period" into
- * `{from, to}` (`getMetrics` already resolves all five kinds, service
- * included — an open day's own `opened_at`, not date arithmetic), this
- * reuses that exact resolution via `getMetrics`'s own `netRevenue.period`:
- * the trends block's window is provably the same window the KPI/comparison
- * cards used for the same query, not a second formula that could disagree.
- * `null` mirrors `getPerformanceComparison`'s own "Aucun service ouvert"
- * case — `period.kind === "none"` only happens for `service` with nothing
- * open, since every other kind always resolves to a real range.
+ * `{from, to}`, this reuses `resolvePeriodRange` (`BI-11`/`BI-14`, itself
+ * built on `getMetrics`'s own resolution): the trends block's window is
+ * provably the same window the KPI/comparison cards — and, since `BI-14`,
+ * the CSV exports — used for the same query, not a third formula that could
+ * disagree. `null` mirrors `getPerformanceComparison`'s own "Aucun service
+ * ouvert" case: `service` with nothing open, the one query kind that
+ * legitimately resolves to no window at all.
  */
 export async function getSalesTrendsForPeriod(
   locationId: number,
   query: MetricsQuery,
 ): Promise<SalesTrends | null> {
-  const metrics = await getMetrics(locationId, query);
-  const period = metrics.netRevenue.period;
-
-  let from: Date;
-  let to: Date;
-  if (period.kind === "business_day") {
-    from = new Date(period.from);
-    // Still open: "since it opened, up to now" is the honest, still-moving
-    // window a manager watching live figures expects, not the instant this
-    // call happened to run.
-    to = period.to === null ? new Date() : new Date(period.to);
-  } else if (period.kind === "range") {
-    from = new Date(period.from);
-    to = new Date(period.to);
-  } else {
-    // "none": no active service for `period: "service"`, mirroring
-    // `getPerformanceComparison`'s own "Aucun service ouvert" case.
-    // "last_close"/"instant" never occur for `netRevenue`'s own period —
-    // only `cashVariance`/the stock metrics use those two kinds.
-    return null;
-  }
-
-  return getSalesTrends(locationId, from, to);
+  const range = await resolvePeriodRange(locationId, query);
+  if (range === null) return null;
+  return getSalesTrends(locationId, range.from, range.to);
 }

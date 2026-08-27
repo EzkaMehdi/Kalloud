@@ -542,18 +542,6 @@ export const stockMovementsHistoryQuerySchema = z.object({
 export type StockMovementsHistoryQuery = z.infer<typeof stockMovementsHistoryQuerySchema>;
 
 /**
- * BI-12: the same `from`/`to` bounds as `historyPaginationSchema` above,
- * deliberately without its `limit`/`offset` — an export has no next page to
- * ask for, and `limit`'s own 200-row cap there exists specifically to bound
- * a JSON response a browser renders, not a CSV file a spreadsheet opens.
- */
-export const exportRangeQuerySchema = z.object({
-  from: z.iso.datetime({ offset: true, error: "Date de début invalide." }).optional(),
-  to: z.iso.datetime({ offset: true, error: "Date de fin invalide." }).optional(),
-});
-export type ExportRangeQuery = z.infer<typeof exportRangeQuerySchema>;
-
-/**
  * BI-03: "aucun filtre visible s'il est ignoré" — a discriminated union
  * (one `z.strictObject` per period) rather than one object with every
  * field optional. `?period=year&day=12` is a 400 naming `day` as

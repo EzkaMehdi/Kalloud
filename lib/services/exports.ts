@@ -11,6 +11,7 @@ import {
   type StockMovementHistoryFilters,
 } from "../repositories/stock-movements";
 import { getLocationSettings } from "../repositories/settings";
+import { resolvePeriodRange, type MetricsQuery } from "./metrics";
 import { formatZonedIso } from "../time";
 
 /**
@@ -23,6 +24,17 @@ import { formatZonedIso } from "../time";
  * `lib/db.ts::buildLimitOffsetClause`) is answering "every matching row"
  * when `limit`/`offset` are both omitted, which is all a CSV export ever
  * asks for — there is no "next page" of a file someone just downloaded.
+ *
+ * BI-14: "l'export respecte exactement les filtres" (`GATE-6`) — each
+ * function below now takes the cockpit's own `MetricsQuery` (service/day/
+ * month/year/range) rather than a raw, unscoped `{from, to}`: clicking
+ * "Ventes" while the cockpit shows "Ce mois" exports that month, not the
+ * establishment's whole history, resolved via `resolvePeriodRange` (`BI-11`/
+ * `BI-14`) — the same window the KPI cards and the trends block used for
+ * the same query, never a fifth formula that could disagree. `null`
+ * (`period: "service"` with nothing open) is a real, valid file — the
+ * header row alone, not an error — the same honest-empty answer
+ * `getSalesTrendsForPeriod` gives the trends block for the same case.
  *
  * Column headers are French and amounts/dates follow `DEC-09`'s CSV format
  * exactly (`lib/csv.ts`, `lib/time.ts::formatZonedIso`) — this module's own
@@ -39,27 +51,36 @@ import { formatZonedIso } from "../time";
 
 const eur = (value: string) => value; // Already DEC-09's own raw-decimal shape ("12.50") — passed through, never reformatted.
 
-export interface ExportRange {
-  from?: string;
-  to?: string;
+/** `null` when the query resolves to no window at all (`period: "service"`, nothing open). */
+async function resolveIsoRange(
+  locationId: number,
+  query: MetricsQuery,
+): Promise<{ from: string; to: string } | null> {
+  const range = await resolvePeriodRange(locationId, query);
+  if (range === null) return null;
+  return { from: range.from.toISOString(), to: range.to.toISOString() };
 }
 
-export async function exportSalesCsv(locationId: number, range: ExportRange): Promise<string> {
+export async function exportSalesCsv(locationId: number, query: MetricsQuery): Promise<string> {
+  const headers = [
+    "N° de commande",
+    "Table",
+    "Produit",
+    "Quantité",
+    "Prix unitaire",
+    "TVA (%)",
+    "Remise",
+    "Date de vente",
+  ];
+  const range = await resolveIsoRange(locationId, query);
+  if (range === null) return toCsv(headers, []);
+
   const timezone = await zoneOf(locationId);
   const filters: SoldItemFilters = { from: range.from, to: range.to };
   const { items } = await listSoldItems(pool, locationId, filters);
 
   return toCsv(
-    [
-      "N° de commande",
-      "Table",
-      "Produit",
-      "Quantité",
-      "Prix unitaire",
-      "TVA (%)",
-      "Remise",
-      "Date de vente",
-    ],
+    headers,
     items.map((item) => [
       String(item.order_number),
       item.table_name ?? "Vente directe",
@@ -73,21 +94,25 @@ export async function exportSalesCsv(locationId: number, range: ExportRange): Pr
   );
 }
 
-export async function exportPaymentsCsv(locationId: number, range: ExportRange): Promise<string> {
+export async function exportPaymentsCsv(locationId: number, query: MetricsQuery): Promise<string> {
+  const headers = [
+    "N° de commande",
+    "Type",
+    "Méthode",
+    "Montant",
+    "Remboursement du paiement n°",
+    "Créé par (id utilisateur)",
+    "Date",
+  ];
+  const range = await resolveIsoRange(locationId, query);
+  if (range === null) return toCsv(headers, []);
+
   const timezone = await zoneOf(locationId);
   const filters: PaymentHistoryFilters = { from: range.from, to: range.to };
   const { payments } = await listPaymentsHistory(pool, locationId, filters);
 
   return toCsv(
-    [
-      "N° de commande",
-      "Type",
-      "Méthode",
-      "Montant",
-      "Remboursement du paiement n°",
-      "Créé par (id utilisateur)",
-      "Date",
-    ],
+    headers,
     payments.map((payment) => [
       String(payment.order_number),
       payment.type,
@@ -100,13 +125,25 @@ export async function exportPaymentsCsv(locationId: number, range: ExportRange):
   );
 }
 
-export async function exportCashCsv(locationId: number, range: ExportRange): Promise<string> {
+export async function exportCashCsv(locationId: number, query: MetricsQuery): Promise<string> {
+  const headers = [
+    "Journée n°",
+    "Type",
+    "Catégorie",
+    "Montant",
+    "Motif",
+    "Créé par (id utilisateur)",
+    "Date",
+  ];
+  const range = await resolveIsoRange(locationId, query);
+  if (range === null) return toCsv(headers, []);
+
   const timezone = await zoneOf(locationId);
   const filters: CashMovementHistoryFilters = { from: range.from, to: range.to };
   const { movements } = await listCashMovementsHistory(pool, locationId, filters);
 
   return toCsv(
-    ["Journée n°", "Type", "Catégorie", "Montant", "Motif", "Créé par (id utilisateur)", "Date"],
+    headers,
     movements.map((movement) => [
       movement.business_day_id !== null ? String(movement.business_day_id) : "",
       movement.type,
@@ -119,21 +156,25 @@ export async function exportCashCsv(locationId: number, range: ExportRange): Pro
   );
 }
 
-export async function exportStockCsv(locationId: number, range: ExportRange): Promise<string> {
+export async function exportStockCsv(locationId: number, query: MetricsQuery): Promise<string> {
+  const headers = [
+    "Produit",
+    "Type de mouvement",
+    "Quantité",
+    "Motif",
+    "Référence",
+    "Créé par (id utilisateur)",
+    "Date",
+  ];
+  const range = await resolveIsoRange(locationId, query);
+  if (range === null) return toCsv(headers, []);
+
   const timezone = await zoneOf(locationId);
   const filters: StockMovementHistoryFilters = { from: range.from, to: range.to };
   const { movements } = await listStockMovementsHistory(pool, locationId, filters);
 
   return toCsv(
-    [
-      "Produit",
-      "Type de mouvement",
-      "Quantité",
-      "Motif",
-      "Référence",
-      "Créé par (id utilisateur)",
-      "Date",
-    ],
+    headers,
     movements.map((movement) => [
       movement.product_name,
       movement.type,

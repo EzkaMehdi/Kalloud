@@ -210,3 +210,41 @@ export async function getMetrics(locationId: number, query: MetricsQuery): Promi
     stockLowStock: envelope("stock_low_stock", stockAlerts.low_stock, { kind: "instant" }),
   };
 }
+
+/**
+ * BI-11/BI-14: `MetricsQuery` (service/day/month/year/range) resolved to a
+ * plain `{from, to}` window, for the handful of callers that need one
+ * rather than a full envelope of KPIs — `getSalesTrendsForPeriod` (`BI-11`)
+ * and the CSV exports (`BI-14`, wiring each export to the cockpit's own
+ * currently-selected period). Built on `getMetrics` itself rather than a
+ * second walk of the same five-branch `if`: `netRevenue.period` already IS
+ * that resolved window, for every query this function is ever called with
+ * (`business_day` for `service`, `range` for everything else) — reading it
+ * back is reuse, not a second implementation. `null` means "no window" —
+ * `service` with nothing open — the one legitimate case with nothing to
+ * report, mirroring `getPerformanceComparison`'s own "Aucun service ouvert".
+ */
+export async function resolvePeriodRange(
+  locationId: number,
+  query: MetricsQuery,
+): Promise<{ from: Date; to: Date } | null> {
+  const metrics = await getMetrics(locationId, query);
+  const period = metrics.netRevenue.period;
+
+  if (period.kind === "business_day") {
+    // Still open: "since it opened, up to now" — the honest, still-moving
+    // window a manager watching live figures expects, not the instant this
+    // call happened to run.
+    return {
+      from: new Date(period.from),
+      to: period.to === null ? new Date() : new Date(period.to),
+    };
+  }
+  if (period.kind === "range") {
+    return { from: new Date(period.from), to: new Date(period.to) };
+  }
+  // "none": no active service for `service`. "last_close"/"instant" never
+  // occur for `netRevenue`'s own period — only `cashVariance`/the stock
+  // metrics use those two kinds.
+  return null;
+}

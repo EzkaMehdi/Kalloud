@@ -476,7 +476,7 @@ export default function Bilan() {
         )}
       </AsyncSection>
 
-      {canExport && <ExportsSection />}
+      {canExport && <ExportsSection period={metricsPeriod} year={year} month={month} />}
 
       {receiptOrderId !== null && (
         <ReceiptDialog

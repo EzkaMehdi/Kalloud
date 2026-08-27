@@ -64,7 +64,7 @@ describe("BI-12: exportSalesCsv", () => {
     });
     await sell(context, [{ productId: product.id, quantity: 2 }], { paymentMethod: "CASH" });
 
-    const csv = await exportSalesCsv(tenant.locationId, {});
+    const csv = await exportSalesCsv(tenant.locationId, { period: "service" });
 
     expect(csv.charCodeAt(0)).toBe(0xfeff);
     const [header, row] = parseCsv(csv);
@@ -86,6 +86,11 @@ describe("BI-12: exportSalesCsv", () => {
   });
 
   it("never mixes another establishment's sales in", async () => {
+    // `tenant` has its own open service too — so this proves the isolation
+    // holds even with a real, non-empty window resolved on both sides, not
+    // merely that an unrelated tenant's data cannot leak into an empty one.
+    await openBusinessDay(pool, tenant.locationId, "0.00");
+
     const otherTenant = await createTestTenant(pool, "Other Tenant");
     const otherOwner = await createTestUser(pool, otherTenant, "OWNER");
     await openBusinessDay(pool, otherTenant.locationId, "0.00");
@@ -109,7 +114,7 @@ describe("BI-12: exportSalesCsv", () => {
       { paymentMethod: "CASH" },
     );
 
-    const csv = await exportSalesCsv(tenant.locationId, {});
+    const csv = await exportSalesCsv(tenant.locationId, { period: "service" });
     expect(parseCsv(csv)).toHaveLength(1); // header only, no data row
   });
 });
@@ -125,7 +130,7 @@ describe("BI-12: exportPaymentsCsv", () => {
     });
     await sell(context, [{ productId: product.id, quantity: 1 }], { paymentMethod: "CARD" });
 
-    const csv = await exportPaymentsCsv(tenant.locationId, {});
+    const csv = await exportPaymentsCsv(tenant.locationId, { period: "service" });
     const [header, row] = parseCsv(csv);
 
     expect(header).toEqual([
@@ -157,7 +162,7 @@ describe("BI-12: exportCashCsv", () => {
       createdBy: context.userId,
     });
 
-    const csv = await exportCashCsv(tenant.locationId, {});
+    const csv = await exportCashCsv(tenant.locationId, { period: "service" });
     const rows = parseCsv(csv);
 
     expect(rows[0]).toEqual([
@@ -198,7 +203,13 @@ describe("BI-12: exportStockCsv", () => {
       reason: "Livraison fournisseur",
     });
 
-    const csv = await exportStockCsv(tenant.locationId, {});
+    // Stock movements have no business day of their own to scope
+    // `period: "service"` against — "cette année" is the natural period a
+    // manager would pick to export stock history, and needs no service open.
+    const csv = await exportStockCsv(tenant.locationId, {
+      period: "year",
+      year: new Date().getFullYear(),
+    });
     const rows = parseCsv(csv);
 
     expect(rows[0]).toEqual([

@@ -3,7 +3,7 @@ import { pool } from "../../lib/db";
 import { openBusinessDay } from "../../lib/repositories/business-days";
 import { createProduct } from "../../lib/repositories/products";
 import { getPerformanceComparison } from "../../lib/services/performance";
-import { zonedTime } from "../../lib/time";
+import { zonedTime, zonedToday } from "../../lib/time";
 import { sell } from "./helpers/sales";
 import { createTestTenant, createTestUser, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
@@ -103,11 +103,20 @@ describe("BI-07: a day compares to the average of recent same-weekday days, not 
     const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000);
     await backdateOrder(order.order.id, twoDaysAgo);
 
+    // BI-13: the establishment's own timezone (Europe/Paris, the seeded
+    // default), not UTC — extracting UTC calendar fields here named the
+    // wrong day whenever "now" fell in the window where the UTC and Paris
+    // calendar dates disagree (e.g. just after midnight in Paris but still
+    // the previous day in UTC, which August's CEST offset makes a real ~2h
+    // window every day), silently querying a day the order never landed in
+    // and failing intermittently depending only on the wall-clock minute
+    // the suite happened to run at.
+    const { year, month, day } = zonedToday("Europe/Paris", twoDaysAgo);
     const result = await getPerformanceComparison(tenant.locationId, {
       period: "day",
-      year: twoDaysAgo.getUTCFullYear(),
-      month: twoDaysAgo.getUTCMonth() + 1,
-      day: twoDaysAgo.getUTCDate(),
+      year,
+      month,
+      day,
     });
 
     expect(result.netRevenue.current).toBe("5.00");

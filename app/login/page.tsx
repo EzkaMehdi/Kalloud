@@ -85,6 +85,12 @@ function LoginForm() {
         <p className="auth-links">
           <Link href="/forgot-password">Mot de passe oublié ?</Link>
         </p>
+        {/* SAAS-01: the entry point for a customer who has no account yet.
+            Until this ticket there was none — the only way in was for
+            someone to create the rows by hand. */}
+        <p className="auth-subtitle">
+          Pas encore de compte ? <Link href="/signup">Créer mon établissement</Link>
+        </p>
         <div className="auth-devbox">
           Comptes de démonstration (mot de passe : <strong>Kalloud123!</strong>) :
           owner@kalloud.test · manager@kalloud.test · cashier@kalloud.test

@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { AsyncSection } from "@/components/ui/async-section";
+import { CatalogueSection, type CatalogueProduct } from "@/components/catalogue-section";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { Shell } from "@/components/shell";
 import { TextField } from "@/components/ui/text-field";
 import { ApiError, apiFetch } from "@/lib/client/api";
@@ -12,10 +14,17 @@ import { useCurrentUser } from "@/lib/client/use-current-user";
  * Phase 4B: the screen that makes GATE-4B's "le propriétaire configure son
  * établissement sans SQL" true.
  *
- * Three sections, matching the three tasks: the establishment's own settings
- * (CFG-01, OWNER only), the catalogue's categories (CFG-02) and the floor
- * plan (CFG-03). Products keep their existing screen — this one adds what
- * had no home at all.
+ * Four sections: the establishment's own settings (CFG-01, OWNER only), the
+ * catalogue's categories and its products (CFG-02) and the floor plan
+ * (CFG-03).
+ *
+ * The products section arrived late, with SAAS-01. This comment used to say
+ * "products keep their existing screen", meaning the stock page — but that
+ * one only *adjusts quantities* (STK-04/05) and has never been able to
+ * create a product or change a price. CFG-02 had built the service, the API
+ * and the audit trail; nothing called them, and the assumption written here
+ * is why nobody noticed until a new customer needed a catalogue from
+ * scratch.
  */
 
 interface Settings {
@@ -63,6 +72,15 @@ export default function Configuration() {
   const configQuery = useAsyncData(() => apiFetch<Configuration>("/api/settings"), []);
   const categoriesQuery = useAsyncData(() => apiFetch<Category[]>("/api/categories"), []);
   const tablesQuery = useAsyncData(() => apiFetch<TableRow[]>("/api/tables?all=true"), []);
+  // listProducts returns deactivated products too (see its own note), which
+  // is what this screen needs: a product retired from the menu must stay
+  // visible here to be put back.
+  const productsQuery = useAsyncData(() => apiFetch<CatalogueProduct[]>("/api/products"), []);
+  // SAAS-01: only to know whether the first service has been opened yet.
+  const cashQuery = useAsyncData(
+    () => apiFetch<{ businessDayOpen: boolean }>("/api/cash-summary"),
+    [],
+  );
 
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -97,6 +115,19 @@ export default function Configuration() {
           {error}
         </p>
       )}
+
+      {/* SAAS-01: shown only while something is still missing — see the
+          component's own note. Every query must have answered first, so a
+          slow load never claims a step is undone. */}
+      {productsQuery.state.status === "success" &&
+        tablesQuery.state.status === "success" &&
+        cashQuery.state.status === "success" && (
+          <OnboardingChecklist
+            tableCount={tablesQuery.state.data.length}
+            productCount={productsQuery.state.data.length}
+            serviceOpen={cashQuery.state.data.businessDayOpen}
+          />
+        )}
 
       <div className="section-title">
         <div>
@@ -154,6 +185,16 @@ export default function Configuration() {
           onError={(caught) => fail(caught, "Impossible de créer la catégorie.")}
         />
       )}
+
+      <CatalogueSection
+        productsState={productsQuery.state}
+        categories={categoriesQuery.state.status === "success" ? categoriesQuery.state.data : []}
+        canManage={canManage}
+        onChanged={productsQuery.refetch}
+        onRetry={productsQuery.refetch}
+        onError={(caught, fallback) => fail(caught, fallback)}
+        onNotice={report}
+      />
 
       <div className="section-title">
         <div>

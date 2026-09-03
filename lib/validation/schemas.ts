@@ -47,6 +47,29 @@ export const credentialsSchema = z.strictObject({
 });
 export type Credentials = z.infer<typeof credentialsSchema>;
 
+/**
+ * SAAS-01: the shape of a new customer. Deliberately short — DEC-01 puts one
+ * establishment per organization for the MVP, so the establishment's name is
+ * the organization's too, and everything else (timezone, currency, tax rate,
+ * threshold) has a default the owner refines afterwards through CFG-01.
+ * Asking for it at signup would put a form between someone and the product
+ * before they have seen it.
+ *
+ * The password is only bounded here; its strength is `assertPasswordStrength`
+ * (the same rule the password reset applies), so one function stays the
+ * authority on what a strong password is.
+ */
+export const signupSchema = z.strictObject({
+  establishmentName: shortTextSchema(120, "Le nom de l'établissement"),
+  ownerName: shortTextSchema(120, "Votre nom"),
+  email: emailSchema,
+  password: z
+    .string({ error: "Le mot de passe est requis." })
+    .min(1, { error: "Le mot de passe est requis." })
+    .max(200, { error: "Mot de passe trop long." }),
+});
+export type SignupBody = z.infer<typeof signupSchema>;
+
 export const passwordResetRequestSchema = z.strictObject({ email: emailSchema });
 export type PasswordResetRequestBody = z.infer<typeof passwordResetRequestSchema>;
 

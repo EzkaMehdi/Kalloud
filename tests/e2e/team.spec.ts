@@ -141,14 +141,39 @@ test.describe("SAAS-02: the owner administers the team, and nobody else can", ()
     await managerContext.close();
   });
 
+  test("says so, in view, when the e-mail is already taken", async ({ page }) => {
+    await tenant.login(page);
+    await page.goto("/configuration");
+
+    const inviteForm = page.locator("form").filter({ hasText: "Ajouter au personnel" });
+    await page.getByLabel("Nouveau membre").fill("Doublon");
+    await page.getByLabel("Adresse e-mail").fill(tenant.email);
+    await page.getByLabel("Mot de passe initial").fill(PASSWORD);
+    await inviteForm.getByRole("combobox").selectOption("CASHIER");
+    await page.getByRole("button", { name: /ajouter au personnel/i }).click();
+
+    const alert = page.locator("p.form-error");
+    await expect(alert).toContainText(/existe déjà/i);
+    await expect(alert).toBeInViewport();
+  });
+
   test("refuses to leave the establishment without an owner", async ({ page }) => {
     await tenant.login(page);
     await page.goto("/configuration");
 
+    // Scrolled deep into the page first, which is the situation the banner
+    // failed in: acting from the middle of a very long screen.
+    await page.getByRole("heading", { name: "Plan de salle" }).scrollIntoViewIfNeeded();
     const ownerRow = page.locator(".order-row").filter({ hasText: tenant.email });
     await ownerRow.getByRole("combobox").selectOption("MANAGER");
 
-    await expect(page.locator("p.form-error")).toContainText(/au moins un propriétaire actif/i);
+    const alert = page.locator("p.form-error");
+    await expect(alert).toContainText(/au moins un propriétaire actif/i);
+    // `toBeVisible` is not enough, and that is exactly how this shipped
+    // broken: the banner *was* rendered, a thousand pixels above the
+    // viewport, so the refusal looked like a button doing nothing. What has
+    // to hold is that the reader can see it from where they acted.
+    await expect(alert).toBeInViewport();
     await expect(ownerRow.getByRole("combobox")).toHaveValue("OWNER");
 
     // Still an owner after a reload: the refusal is the server's, not a

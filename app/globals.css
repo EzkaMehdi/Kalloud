@@ -341,6 +341,22 @@ a.outline-button {
   margin-top: 6px;
   font-weight: 500;
 }
+/* SAAS-02: the configuration page carries one notice/error banner for all
+   five of its sections, and it lives at the very top. That was fine while
+   the page was short; it is now ~4000px tall, so a refusal raised from the
+   team or the catalogue rendered a thousand pixels above the viewport and
+   the action simply looked like it did nothing. Pinned instead of moved:
+   scrolling the reader back to the top would yank them away from the row
+   they were working on. */
+.page-alerts {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--paper);
+  padding: 8px 0;
+  margin-bottom: 4px;
+}
+
 .form-error {
   color: #bd4e46;
   background: #fff1ef;

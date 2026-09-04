@@ -112,16 +112,26 @@ export default function Configuration() {
         </div>
       </div>
 
-      {notice && (
-        <div className="status" style={{ marginBottom: 12 }} role="status" aria-live="polite">
-          <span className="dot" aria-hidden="true" />
-          {notice}
+      {/* SAAS-02: sticky (`.page-alerts`) rather than a plain block at the
+          top. This one banner answers for five sections spread over a very
+          long page, and a refusal raised from the team or the catalogue
+          used to render far above the viewport — the button looked inert.
+          Only rendered when there is something to say, so it never takes
+          up a strip of empty pinned space. */}
+      {(notice || error) && (
+        <div className="page-alerts">
+          {notice && (
+            <div className="status" role="status" aria-live="polite">
+              <span className="dot" aria-hidden="true" />
+              {notice}
+            </div>
+          )}
+          {error && (
+            <p className="form-error" style={{ margin: 0 }} role="alert">
+              {error}
+            </p>
+          )}
         </div>
-      )}
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
       )}
 
       {/* SAAS-01: shown only while something is still missing — see the

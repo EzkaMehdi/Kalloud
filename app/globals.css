@@ -272,6 +272,24 @@ a.outline-button {
   border-color: #8cb29b;
   box-shadow: 0 0 0 3px #dfeee2;
 }
+/* UX-04: a field nobody may edit has to *look* like one. `.input` sets its
+   own white background and ink-coloured text, which overrides the browser's
+   default disabled rendering — so a manager reading the establishment's
+   settings (owner-only, DEC-07) saw ordinary fields, clicked into them, and
+   nothing happened. The sentence under the card explained why, but only
+   after the person had already tried. Reported in manual verification.
+
+   Text stays at --muted on this ground (~6:1) rather than being faded to
+   the point of illegibility: the values are still information a manager
+   needs to read, they are simply not theirs to change. */
+.input:disabled,
+.input[readonly] {
+  background: #f1f3f1;
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .input[aria-invalid="true"] {
   border-color: #bd4e46;
 }

@@ -38,8 +38,17 @@ test.describe.serial("OPS-06B: the three roles each do their own day's work", ()
 
   test.afterAll(() => tenant.dispose());
 
-  /** The nav is filtered by permission, so it is the cheapest read of "what may this person do". */
+  /**
+   * The nav is filtered by permission, so it is the cheapest read of "what
+   * may this person do".
+   *
+   * Read only once the topbar shows who is signed in: that is the moment
+   * the session has resolved. Reading earlier catches the loading state and
+   * makes the assertion flaky — which is how the loading-state bug above
+   * was found in the first place.
+   */
   async function navigationLinks(page: Page): Promise<string[]> {
+    await expect(page.locator(".user-menu-info")).toBeVisible();
     return page.locator(".nav-item span").allTextContents();
   }
 
@@ -212,8 +221,25 @@ test.describe.serial("OPS-06B: the three roles each do their own day's work", ()
     // is theirs — but the establishment's own settings are read-only and the
     // team section is absent entirely (DEC-07).
     await expect(page.getByRole("heading", { name: "Plan de salle" })).toBeVisible();
-    await expect(page.getByLabel("Devise (code ISO, ex. EUR)")).toBeDisabled();
     await expect(page.getByRole("heading", { name: "Équipe" })).toHaveCount(0);
+
+    // `toBeDisabled()` alone is not enough, and that is how this shipped
+    // looking wrong: the field *was* disabled, and rendered exactly like an
+    // editable one — `.input` sets its own white background, overriding the
+    // browser's disabled styling. A manager clicked into it and nothing
+    // happened. So the assertion is that it looks different from a field
+    // they may actually edit.
+    const currency = page.getByLabel("Devise (code ISO, ex. EUR)");
+    await expect(currency).toBeDisabled();
+    const editable = page.getByLabel("Nouvelle table");
+    const [lockedBackground, editableBackground] = await Promise.all([
+      currency.evaluate((node) => getComputedStyle(node).backgroundColor),
+      editable.evaluate((node) => getComputedStyle(node).backgroundColor),
+    ]);
+    expect(lockedBackground, "a field nobody may edit must not look like one they may").not.toBe(
+      editableBackground,
+    );
+    expect(await currency.evaluate((node) => getComputedStyle(node).cursor)).toBe("not-allowed");
 
     expect((await page.request.get("/api/team")).status()).toBe(403);
     expect(

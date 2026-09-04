@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { expect, type Page } from "@playwright/test";
 import { hashPassword } from "../../../lib/auth/password";
+import type { Role } from "../../../lib/authz";
 
 /**
  * Creates an establishment this spec alone owns, directly in the database
@@ -24,7 +25,22 @@ export interface ThrowawayTenant {
   email: string;
   password: string;
   login(page: Page): Promise<void>;
+  /**
+   * OPS-06B: adds a colleague with `role` and returns a `login` bound to
+   * them. The suite was almost entirely owner-driven — 21 owner sign-ins
+   * against 2 for each other role, and those only checked refusals — so
+   * "every P1 journey passes on all three roles" needed a way to actually
+   * *work* as a manager or a cashier, not merely to be turned away as one.
+   */
+  addMember(role: Role, label: string): Promise<TenantMember>;
   dispose(): Promise<void>;
+}
+
+export interface TenantMember {
+  userId: number;
+  email: string;
+  password: string;
+  login(page: Page): Promise<void>;
 }
 
 const PASSWORD = "Password123!";
@@ -59,6 +75,16 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
     [user.id, org.id, location.id],
   );
 
+  const members: number[] = [];
+
+  async function signIn(page: Page, memberEmail: string) {
+    await page.goto("/login");
+    await page.getByLabel("Adresse e-mail").fill(memberEmail);
+    await page.getByLabel("Mot de passe").fill(PASSWORD);
+    await page.getByRole("button", { name: /se connecter/i }).click();
+    await expect(page).toHaveURL(/\/caisse$/);
+  }
+
   return {
     pool,
     organizationId: org.id,
@@ -67,11 +93,27 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
     email,
     password: PASSWORD,
     async login(page: Page) {
-      await page.goto("/login");
-      await page.getByLabel("Adresse e-mail").fill(email);
-      await page.getByLabel("Mot de passe").fill(PASSWORD);
-      await page.getByRole("button", { name: /se connecter/i }).click();
-      await expect(page).toHaveURL(/\/caisse$/);
+      await signIn(page, email);
+    },
+    async addMember(role: Role, label: string) {
+      const memberEmail = `${label.toLowerCase().replace(/[^a-z0-9]/g, "")}-${suffix}@example.test`;
+      const {
+        rows: [member],
+      } = await pool.query<{ id: number }>(
+        "INSERT INTO users (email, password_hash, name) VALUES ($1, $2, $3) RETURNING id",
+        [memberEmail, await hashPassword(PASSWORD), `${label} ${role}`],
+      );
+      await pool.query(
+        "INSERT INTO memberships (user_id, organization_id, location_id, role) VALUES ($1, $2, $3, $4)",
+        [member.id, org.id, location.id, role],
+      );
+      members.push(member.id);
+      return {
+        userId: member.id,
+        email: memberEmail,
+        password: PASSWORD,
+        login: (page: Page) => signIn(page, memberEmail),
+      };
     },
     async dispose() {
       // Historical, financial and stock rows are deliberately NOT
@@ -97,7 +139,7 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
       // membership and leaves the person: without this every run added one
       // permanent row per spec using this helper.
       await pool.query("DELETE FROM login_attempts WHERE email = $1", [email]);
-      await pool.query("DELETE FROM users WHERE id = $1", [user.id]);
+      await pool.query("DELETE FROM users WHERE id = ANY($1)", [[user.id, ...members]]);
       await pool.end();
     },
   };

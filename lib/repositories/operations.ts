@@ -16,7 +16,15 @@ import type { Queryable } from "../db";
 
 export interface StaleOpenBusinessDayRow {
   location_id: number;
-  opened_at: string;
+  /**
+   * A real `Date`: node-postgres parses `timestamptz` into one and this
+   * repository sets no type parser. Typed honestly because the first
+   * version claimed `string`, and the alert built from it interpolated a
+   * `Date` — so an operator's payload carried
+   * "Wed Sep 02 2026 22:13:24 GMT+0200 (Central European Summer Time)",
+   * a machine-hostile string that also depended on the server's locale.
+   */
+  opened_at: Date;
   hours_open: number;
 }
 

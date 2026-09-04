@@ -64,7 +64,10 @@ export async function getOperationsReport(): Promise<OperationsReport> {
     databaseReachable: reachable,
     staleOpenBusinessDays: staleOpenBusinessDays.map((day) => ({
       locationId: day.location_id,
-      openedAt: day.opened_at,
+      // ISO 8601 UTC: this payload is read by a collector and by an
+      // operator who may not share the establishment's timezone, so the
+      // instant is stated unambiguously rather than rendered.
+      openedAt: day.opened_at.toISOString(),
       hoursOpen: day.hours_open,
     })),
     unexplainedVariances: unexplained.map((row) => ({

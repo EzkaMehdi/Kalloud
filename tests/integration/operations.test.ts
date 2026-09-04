@@ -5,6 +5,7 @@ import {
   listStaleOpenBusinessDays,
   listUnexplainedVariances,
 } from "../../lib/repositories/operations";
+import { getOperationsReport } from "../../lib/services/operations";
 import { createTestTenant, type TestTenant } from "./helpers/fixtures";
 import { resetDatabase } from "./helpers/reset-database";
 
@@ -128,6 +129,20 @@ describe("operational facts (OPS-02)", () => {
     // An already-handled gap that keeps firing for days is how an alert
     // becomes wallpaper.
     expect(await listUnexplainedVariances(pool, new Date(Date.now() - 86_400_000))).toEqual([]);
+  });
+
+  it("states the instant a stale service was opened in a machine-readable form", async () => {
+    await openDay(30);
+
+    const report = await getOperationsReport();
+    const alert = report.alerts.find((entry) => entry.id.startsWith("business_day_not_closed"));
+    expect(alert).toBeDefined();
+    // ISO 8601, not a locale-dependent Date.toString(). The first version
+    // typed `opened_at` as a string while node-postgres returns a Date, so
+    // the payload carried "Wed Sep 02 2026 22:13:24 GMT+0200 (Central
+    // European Summer Time)" — unusable by a collector, and different on
+    // another machine.
+    expect(alert?.observed).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
   });
 
   it("counts closings in the window as context", async () => {

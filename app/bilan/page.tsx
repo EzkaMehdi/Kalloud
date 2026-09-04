@@ -355,7 +355,13 @@ export default function Bilan() {
             key={label}
             role="tab"
             aria-selected={historyStatus === value}
-            className={historyStatus === value ? "active" : ""}
+            // OPS-07: `segment`, like the period tabs above. These sat in a
+            // `.segmented` container but carried only `active`, so they were
+            // the same control implemented twice — and the half without the
+            // class rendered 23px tall, under WCAG 2.2 AA's 24×24 minimum
+            // (2.5.8). Sharing the one definition is the fix; a second CSS
+            // rule would have re-created the divergence.
+            className={`segment ${historyStatus === value ? "active" : ""}`}
             onClick={() => {
               setHistoryStatus(value);
               // A filter change makes the current offset meaningless.

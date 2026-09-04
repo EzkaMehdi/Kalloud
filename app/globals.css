@@ -323,7 +323,7 @@ a.outline-button {
   border: 1px solid var(--line);
   border-radius: 15px;
   padding: 13px;
-  color: #718078;
+  color: var(--muted);
   text-align: left;
   min-height: 94px;
 }
@@ -421,8 +421,13 @@ a.outline-button {
 /* ORD-06: cancelling a ticket. Deliberately quieter than the checkout
    button — it is a legitimate, routine action, not the primary one, and it
    should not compete for the thumb that is about to take payment. */
+.skip-link {
+  min-height: 44px;
+}
 .link-button {
-  min-height: 40px;
+  /* OPS-07: was 40px — clears WCAG 2.2 AA's 24×24 on its own, but the bar
+     on a till used standing is the thumb, not the standard. */
+  min-height: 44px;
   background: none;
   border: none;
   color: #6b7a71;
@@ -570,6 +575,8 @@ a.outline-button {
   padding: 10px 12px;
   border-radius: 12px;
   font-weight: 700;
+  /* OPS-07: this is the till's cash-movement action, tapped mid-service. */
+  min-height: 44px;
 }
 .tables {
   display: grid;
@@ -619,7 +626,10 @@ a.outline-button {
   background: #e9f6e9;
 }
 .busy {
-  color: #b85e19;
+  /* OPS-07: #b85e19 measured 4,04:1 on this ground — under WCAG AA's 4,5
+     for normal text, and this badge is how a room reads "table occupée"
+     across a floor. Darkened to ~5,1:1. */
+  color: #a04f10;
   background: #fff0df;
 }
 .bottom-nav {
@@ -640,7 +650,7 @@ a.outline-button {
   display: none;
 }
 .nav-item {
-  color: #8b958f;
+  color: var(--muted);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -784,7 +794,7 @@ dialog.sheet::backdrop {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #758078;
+  color: var(--muted);
   font-weight: 700;
 }
 .quantity button {
@@ -870,6 +880,17 @@ dialog.sheet::backdrop {
   padding: 4px 7px;
   font-weight: 700;
 }
+/* OPS-07: as a `<button>` this badge is the restock action (STK-04), and it
+   rendered 69×21 — under WCAG 2.2 AA's 24×24 minimum (2.5.8) and far under
+   what a thumb finds on a till used standing. The badge keeps its size; the
+   button around it gets the target. */
+button.stock-alert {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .ok {
   background: #eaf6e9;
   color: #347c4d;
@@ -893,8 +914,9 @@ dialog.sheet::backdrop {
 }
 .segment {
   background: transparent;
-  color: #6e7872;
-  min-height: 38px;
+  color: var(--muted);
+  /* OPS-07: 38px cleared WCAG AA but not a thumb. */
+  min-height: 44px;
   padding: 0 13px;
   border-radius: 10px;
   white-space: nowrap;
@@ -924,7 +946,7 @@ dialog.sheet::backdrop {
   border: 0;
 }
 .kpi-label {
-  color: #758078;
+  color: var(--muted);
   font-size: 12px;
   margin-bottom: 11px;
   display: block;
@@ -938,7 +960,7 @@ dialog.sheet::backdrop {
 }
 .split {
   font-size: 11px;
-  color: #718078;
+  color: var(--muted);
   margin-top: 9px;
   display: flex;
   gap: 7px;
@@ -949,6 +971,26 @@ dialog.sheet::backdrop {
   color: var(--ink);
   letter-spacing: 0;
 }
+/* OPS-07: the first KPI card is dark (`--forest`), and only `.kpi-label`
+   ever got a light variant. `.split` kept its grey (2,89:1) and `.split b`
+   kept `--ink` — near-black on dark green, **1,35:1**, which is the amounts
+   in the breakdown line being effectively invisible. Measured, not guessed:
+   tests/e2e/accessibilite.spec.ts computes the rendered contrast of every
+   text node on every MVP screen. */
+.kpi:first-child .split {
+  color: #bbd1c2;
+}
+.kpi:first-child .split b,
+.kpi:first-child .delta {
+  color: #fff;
+}
+.kpi:first-child .delta.up {
+  color: #9fe0b4;
+}
+.kpi:first-child .delta.down {
+  color: #f6a9a2;
+}
+
 /* BI-11: the comparison and cash-reconciliation blocks' percent/écart
    badge — same red/green convention as .order-row's own b.out/b.in. */
 .delta {
@@ -1028,7 +1070,9 @@ dialog.sheet::backdrop {
 .period-selects select {
   width: 100%;
   display: block;
-  min-height: 43px;
+  /* OPS-07: was 43px — one pixel short of the target size this product
+     holds itself to everywhere else (`.input` is 48). */
+  min-height: 44px;
   margin-top: 5px;
   background: white;
   border: 1px solid var(--line);

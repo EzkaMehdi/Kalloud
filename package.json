@@ -32,6 +32,7 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
+    "test:e2e:fresh": "node --env-file=.env scripts/reset-db.mjs && node --env-file=.env scripts/migrate.mjs up && playwright test tests/e2e/parcours-complet.spec.ts",
     "setup": "node --env-file=.env scripts/ensure-db.mjs && node --env-file=.env scripts/migrate.mjs up && node --env-file=.env scripts/seed.mjs"
   },
   "dependencies": {

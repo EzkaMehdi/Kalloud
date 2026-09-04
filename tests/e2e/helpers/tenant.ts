@@ -20,6 +20,7 @@ export interface ThrowawayTenant {
   pool: Pool;
   organizationId: number;
   locationId: number;
+  ownerUserId: number;
   email: string;
   password: string;
   login(page: Page): Promise<void>;
@@ -62,6 +63,7 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
     pool,
     organizationId: org.id,
     locationId: location.id,
+    ownerUserId: user.id,
     email,
     password: PASSWORD,
     async login(page: Page) {
@@ -91,6 +93,11 @@ export async function createThrowawayTenant(label: string): Promise<ThrowawayTen
       await pool.query("DELETE FROM payments WHERE location_id = $1", [location.id]);
       await pool.query("DELETE FROM orders WHERE location_id = $1", [location.id]);
       await pool.query("DELETE FROM organizations WHERE id = $1", [org.id]);
+      // `users` is global, so the cascade from `organizations` takes the
+      // membership and leaves the person: without this every run added one
+      // permanent row per spec using this helper.
+      await pool.query("DELETE FROM login_attempts WHERE email = $1", [email]);
+      await pool.query("DELETE FROM users WHERE id = $1", [user.id]);
       await pool.end();
     },
   };

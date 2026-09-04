@@ -74,16 +74,42 @@ describe("authentication service (SEC-03)", () => {
       user.userId,
     ]);
 
-    // The user row itself is still ACTIVE, but findAuthenticatedSession joins
-    // on an ACTIVE membership, so a valid session can never resolve context.
+    // Refused at the login itself since SAAS-02. This test previously
+    // asserted the opposite half of the same guarantee — that login
+    // *succeeded* and only `findAuthenticatedSession` refused to resolve a
+    // context — which was true while nothing in the product ever set
+    // `memberships.status = 'DISABLED'`. Now that suspending a member is a
+    // button, that behaviour would hand a suspended employee a successful
+    // login followed by an immediate bounce. The user row itself stays
+    // ACTIVE: what is suspended is the membership.
+    await expect(
+      login({
+        email: user.email,
+        password: user.password,
+        ipAddress: "127.0.0.1",
+        userAgent: null,
+      }),
+    ).rejects.toBeInstanceOf(UnauthenticatedError);
+  });
+
+  it("still refuses to resolve a session opened before the membership was disabled", async () => {
+    const tenant = await createTestTenant(pool);
+    const user = await createTestUser(pool, tenant, "MANAGER");
     const result = await login({
       email: user.email,
       password: user.password,
       ipAddress: "127.0.0.1",
       userAgent: null,
     });
-    const session = await findAuthenticatedSession(pool, result.token);
-    expect(session).toBeNull();
+
+    await pool.query("UPDATE memberships SET status = 'DISABLED' WHERE user_id = $1", [
+      user.userId,
+    ]);
+
+    // The second layer, kept: `findAuthenticatedSession` joins on an ACTIVE
+    // membership, so an already-issued token stops resolving whether or not
+    // anything revoked it.
+    expect(await findAuthenticatedSession(pool, result.token)).toBeNull();
   });
 
   it("locks out further attempts after repeated failures for the same email", async () => {

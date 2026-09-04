@@ -18,6 +18,7 @@ import {
   stockDeltaSchema,
   stockMovementTypeFilterSchema,
   reasonSchema,
+  roleSchema,
   shortTextSchema,
   stockQuantitySchema,
 } from "./primitives";
@@ -69,6 +70,37 @@ export const signupSchema = z.strictObject({
     .max(200, { error: "Mot de passe trop long." }),
 });
 export type SignupBody = z.infer<typeof signupSchema>;
+
+/**
+ * SAAS-02: a new team member. The role is part of the invitation because
+ * DEC-07 gives each membership exactly one role, and leaving it unset would
+ * mean inventing a default — the wrong one either way (CASHIER locks the
+ * new manager out; MANAGER hands out powers nobody asked for).
+ *
+ * Like the signup schema, the password is only bounded here; its strength
+ * stays `assertPasswordStrength`'s single rule.
+ */
+export const inviteMemberSchema = z.strictObject({
+  name: shortTextSchema(200, "Le nom"),
+  email: emailSchema,
+  password: z
+    .string({ error: "Le mot de passe est requis." })
+    .min(1, { error: "Le mot de passe est requis." })
+    .max(200, { error: "Mot de passe trop long." }),
+  role: roleSchema,
+});
+export type InviteMemberBody = z.infer<typeof inviteMemberSchema>;
+
+/** Either a role change or an activation change, never both in one request. */
+export const updateMemberSchema = z
+  .strictObject({
+    role: roleSchema.optional(),
+    isActive: z.boolean({ error: "L'activation doit être un booléen." }).optional(),
+  })
+  .refine((body) => (body.role === undefined) !== (body.isActive === undefined), {
+    error: "Indiquez soit un rôle, soit une activation.",
+  });
+export type UpdateMemberBody = z.infer<typeof updateMemberSchema>;
 
 export const passwordResetRequestSchema = z.strictObject({ email: emailSchema });
 export type PasswordResetRequestBody = z.infer<typeof passwordResetRequestSchema>;

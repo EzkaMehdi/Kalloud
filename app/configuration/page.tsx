@@ -5,6 +5,7 @@ import { AsyncSection } from "@/components/ui/async-section";
 import { CatalogueSection, type CatalogueProduct } from "@/components/catalogue-section";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { Shell } from "@/components/shell";
+import { TeamSection, type TeamMember } from "@/components/team-section";
 import { TextField } from "@/components/ui/text-field";
 import { ApiError, apiFetch } from "@/lib/client/api";
 import { useAsyncData } from "@/lib/client/use-async-data";
@@ -14,9 +15,9 @@ import { useCurrentUser } from "@/lib/client/use-current-user";
  * Phase 4B: the screen that makes GATE-4B's "le propriétaire configure son
  * établissement sans SQL" true.
  *
- * Four sections: the establishment's own settings (CFG-01, OWNER only), the
- * catalogue's categories and its products (CFG-02) and the floor plan
- * (CFG-03).
+ * Five sections: the establishment's own settings (CFG-01, OWNER only), the
+ * catalogue's categories and its products (CFG-02), the floor plan (CFG-03)
+ * and the team (SAAS-02, OWNER only).
  *
  * The products section arrived late, with SAAS-01. This comment used to say
  * "products keep their existing screen", meaning the stock page — but that
@@ -80,6 +81,13 @@ export default function Configuration() {
   const cashQuery = useAsyncData(
     () => apiFetch<{ businessDayOpen: boolean }>("/api/cash-summary"),
     [],
+  );
+  // SAAS-02: owner-only, and the request is owner-only too — a manager
+  // mounting this page must not fire a call that would 403 and paint an
+  // error over a screen that is otherwise entirely theirs to use.
+  const teamQuery = useAsyncData(
+    () => (isOwner ? apiFetch<TeamMember[]>("/api/team") : Promise.resolve([])),
+    [isOwner],
   );
 
   const [notice, setNotice] = useState("");
@@ -183,6 +191,17 @@ export default function Configuration() {
             report("Catégorie créée");
           }}
           onError={(caught) => fail(caught, "Impossible de créer la catégorie.")}
+        />
+      )}
+
+      {isOwner && (
+        <TeamSection
+          state={teamQuery.state}
+          currentUserId={user?.id ?? null}
+          onChanged={teamQuery.refetch}
+          onRetry={teamQuery.refetch}
+          onError={(caught, fallback) => fail(caught, fallback)}
+          onNotice={report}
         />
       )}
 

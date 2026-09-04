@@ -1,6 +1,7 @@
 import { pool, withTransaction } from "../db";
 import { logger } from "../logger";
 import { TooManyRequestsError, UnauthenticatedError, ValidationError } from "../errors";
+import { hasActiveMembership } from "../repositories/memberships";
 import { findUserByEmail, updateUserPassword } from "../repositories/users";
 import { assertPasswordStrength, hashPassword, verifyPassword } from "./password";
 import {
@@ -54,7 +55,17 @@ export async function login(input: LoginInput): Promise<LoginResult> {
   const user = await findUserByEmail(pool, email);
   const passwordMatches = await verifyPassword(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
 
-  if (!user || user.status !== "ACTIVE" || !passwordMatches) {
+  // SAAS-02: a suspended *membership* has to be refused here too, not only
+  // when the session is later resolved. `users.status` is the account-wide
+  // switch and nothing in the product sets it; what an owner suspends is the
+  // membership (memberships.status), and until this check existed such a
+  // person still received a valid-looking token, saw the login succeed, and
+  // was bounced by the first protected page — an account that appears to
+  // work and does not. Checked after the password so a wrong password and a
+  // suspended account remain indistinguishable (SEC-03).
+  const membershipActive = user ? await hasActiveMembership(pool, user.id) : false;
+
+  if (!user || user.status !== "ACTIVE" || !membershipActive || !passwordMatches) {
     await recordLoginAttempt(pool, email, input.ipAddress, false);
     throw new UnauthenticatedError("Identifiants invalides.");
   }

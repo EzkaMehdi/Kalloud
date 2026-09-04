@@ -90,8 +90,11 @@ test.describe("SAAS-01: a new customer sets themselves up with a browser alone",
     // 2. Signed in on the spot, on the establishment just created — not
     //    bounced back to a login form to retype the password.
     await expect(page).toHaveURL(/\/configuration$/);
-    await expect(page.getByText("Camille Dubois")).toBeVisible();
-    await expect(page.getByText("Propriétaire")).toBeVisible();
+    // Scoped to the header: since SAAS-02 the team form on this page offers
+    // "Propriétaire" as a role option too.
+    const identity = page.locator(".user-menu-info");
+    await expect(identity).toContainText("Camille Dubois");
+    await expect(identity).toContainText("Propriétaire");
 
     const checklist = page.getByText(/0 étape\(s\) sur 3/);
     await expect(checklist).toBeVisible();

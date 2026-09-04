@@ -27,6 +27,27 @@ export default defineConfig({
   // dozens of "Test table …" rows per run. CI reseeds and never saw it.
   globalTeardown: "./tests/e2e/global-teardown.ts",
   fullyParallel: true,
+  /**
+   * Capped rather than left to Playwright's default of half the cores (7 on
+   * a 14-core machine). The whole suite runs against **one** `next dev`
+   * process, which compiles routes on demand; past roughly four concurrent
+   * workers it starts dropping requests, and the symptom is a login that
+   * silently lands back on `/login` in whichever spec happened to be
+   * unlucky. That looked like flakiness in a test and was capacity in the
+   * server — the suite crossed the threshold at 128 tests (OPS-08B).
+   *
+   * Measured rather than guessed: at 7 workers the suite lost 2 to 4 tests a
+   * run, at 4 it still lost 1 to 2, and at 2 it went 3 for 3 green. The
+   * casualty was always whichever spec asked the most of the server at
+   * once — `ticket-persistence`'s two-device test opens two extra browser
+   * contexts on top of the workers.
+   *
+   * The cost is ~25 s (45 s → 1,1 min), which is the right trade for a
+   * suite whose job is to be believed. If it ever needs to run faster, the
+   * fix is a production build behind it, not more workers against a dev
+   * server.
+   */
+  workers: 2,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",

@@ -110,6 +110,12 @@ test.describe("OPS-02: the operations endpoint", () => {
 
     const keys = report.process.routes.map((route: { route: string }) => route.route);
     expect(keys).toContain("/api/products/:id");
-    expect(keys.filter((key: string) => key.startsWith("/api/products/"))).toHaveLength(1);
+    // What matters is that no key carries a raw id, not how many product
+    // routes the rest of the suite happened to touch. Counting them was an
+    // over-specification: OPS-08B's cross-tenant sweep started calling
+    // `/api/products/:id/stock` and `/api/products/:id/stock-counts`, and
+    // this assertion failed on a registry that was behaving perfectly.
+    const withRawId = keys.filter((key: string) => /\/\d+(\/|$)/.test(key));
+    expect(withRawId, "aucune clé de route ne doit porter un identifiant brut").toEqual([]);
   });
 });

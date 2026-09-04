@@ -150,3 +150,42 @@ describe("OPS-08: no request value is ever interpolated into SQL", () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * OPS-08B: every endpoint that takes an id from the client is exercised by
+ * the cross-tenant sweep.
+ *
+ * This is the guard for the gap the review actually found. `SEC-08`'s
+ * browser-level isolation spec covered one such endpoint; the product had
+ * twelve, eleven of them added afterwards, and nobody noticed because
+ * nothing was watching the count. A thirteenth would have slipped in the
+ * same way.
+ *
+ * Matching by route path rather than by assertion count: the sweep must
+ * *mention* each one, which is enough to force the author of a new endpoint
+ * to look at it.
+ */
+describe("OPS-08B: the cross-tenant sweep covers every id-taking endpoint", () => {
+  const sweep = readFileSync(join(process.cwd(), "tests", "e2e", "isolation-p1.spec.ts"), "utf8");
+
+  const idRoutes = listFilesRecursively(apiDir)
+    .filter((file) => file.endsWith("route.ts") && /\[[^\]]+\]/.test(file))
+    .map((file) =>
+      file
+        .replace(join(process.cwd(), "app"), "")
+        .replace("/route.ts", "")
+        // `[id]` / `[userId]` → `:id` / `:userId`, the shape the sweep names.
+        .replace(/\[([^\]]+)\]/g, (_match, name) => `:${name}`),
+    );
+
+  it("finds the id-taking routes", () => {
+    expect(idRoutes.length).toBeGreaterThan(5);
+  });
+
+  it.each(idRoutes)("%s appears in tests/e2e/isolation-p1.spec.ts", (route) => {
+    expect(
+      sweep.includes(route),
+      `${route} n'est pas balayé par la revue d'isolation. Ajoutez-le à tests/e2e/isolation-p1.spec.ts : un identifiant fourni par le client doit répondre 404 quand il appartient à un autre établissement.`,
+    ).toBe(true);
+  });
+});

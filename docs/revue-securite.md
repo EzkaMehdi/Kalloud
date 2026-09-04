@@ -97,3 +97,56 @@ passer en silence.
 `lib/client/use-currency.ts` (`useCurrencyFormatter`) n'est importé nulle
 part. Ce n'est pas un problème de sécurité — c'est du code mort, et cela
 relève de `CLEAN-01`.
+
+---
+
+# Revue différentielle des parcours P1 (`OPS-08B`)
+
+Revue des interfaces et endpoints ajoutés **après** le socle critique.
+Acceptation : aucun finding critique/élevé ouvert avant pilote.
+
+Résultat : **aucun finding**, critique, élevé ou autre. Ce qui a été trouvé
+n'est pas une faille mais un **angle mort de la couverture**, et c'est lui
+qui est refermé.
+
+## L'angle mort
+
+La spec d'isolation navigateur de `SEC-08` couvre exactement **un** endpoint
+prenant un identifiant : `/api/products/[id]`. Le produit en compte
+aujourd'hui **douze** — reçu, remboursement, comptages de stock, les quatre
+routes de ticket, catégories, tables, équipe. Onze sont arrivés après la
+signature du socle, et aucun n'avait jamais reçu la seule question qui
+compte pour eux : *que se passe-t-il quand l'identifiant appartient à
+quelqu'un d'autre ?*
+
+Personne ne l'avait remarqué parce que rien ne surveillait le décompte. Un
+treizième serait passé de la même façon.
+
+## Ce que le balayage a montré
+
+Les douze répondent **`404`**, et non `403` : un refus qui dit « vous n'avez
+pas le droit d'y toucher » confirme que la ligne existe, et un identifiant se
+devine facilement. « Ce n'est pas là » est la réponse honnête à quelqu'un
+pour qui ce n'est effectivement pas là.
+
+Le douzième, `GET /api/products/:id/stock-counts`, répond `200 []` — correct,
+c'est une liste, et une liste vide est ce qu'un étranger possède ici. Vérifié
+sérieusement plutôt que sur lecture du code : le produit de la victime porte
+un vrai comptage, que sa propriétaire voit et que l'attaquant ne voit pas.
+Sans cette seconde assertion, le tableau vide ne prouverait rien.
+
+**Le locataire ne peut jamais être choisi par l'appelant.** Un `locationId`
+glissé dans le corps est rejeté d'emblée (`strictObject`) ; glissé dans la
+requête, il est ignoré — le décompte renvoyé est identique avec et sans lui.
+
+**La pagination ne permet pas d'aspirer la table** : `limit=999999`,
+`limit=-1` et une date malformée sont tous refusés en `400`.
+
+## Ce qui empêche le retour
+
+`tests/e2e/isolation-p1.spec.ts` balaie les douze, plus le choix de
+locataire et les bornes de pagination. Et un contrôle statique
+(`tests/unit/architecture.test.ts`) **énumère les routes prenant un
+identifiant et exige que chacune soit nommée dans le balayage** : c'est le
+garde de l'angle mort lui-même, pas seulement de ses conséquences. Vérifié en
+ajoutant un endpoint factice — le test tombe avec la marche à suivre.

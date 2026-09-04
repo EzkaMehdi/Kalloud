@@ -22,6 +22,8 @@
     "db:migrate:status": "node --env-file=.env scripts/migrate.mjs status",
     "db:seed": "node --env-file=.env scripts/seed.mjs",
     "db:reset": "node --env-file=.env scripts/reset-db.mjs",
+    "db:backup": "node --env-file=.env scripts/backup.mjs",
+    "db:restore": "node --env-file=.env scripts/restore.mjs",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",

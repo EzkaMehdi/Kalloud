@@ -51,6 +51,11 @@ export interface OperationalFacts {
   unexplainedVariances: { locationId: number; businessDayId: number; variance: string }[];
   /** Closings completed in the lookback window — context, never an alert by itself. */
   closingsInWindow: number;
+  /**
+   * OPS-03: age of the most recent usable backup, in hours; `null` when
+   * there is none at all.
+   */
+  lastBackupAgeHours: number | null;
 }
 
 /** A rate is only allowed to fire once it has seen this many requests. */
@@ -59,6 +64,13 @@ export const SERVER_ERROR_RATE_THRESHOLD = 0.01;
 export const P95_LATENCY_THRESHOLD_MS = 1500;
 /** DEC-04 lets a service cross midnight; 24h means nobody closed it. */
 export const STALE_BUSINESS_DAY_HOURS = 24;
+/**
+ * OPS-03/DEC-10: the RPO. A backup older than this means more than a day of
+ * trading could be lost, which is precisely what the target forbids. Checked
+ * with a small grace margin so a scheduler that runs at 03:00 and drifts by
+ * a few minutes does not page anyone every night.
+ */
+export const BACKUP_MAX_AGE_HOURS = 26;
 
 export function evaluateAlerts(
   snapshot: ProcessSnapshot,
@@ -119,6 +131,29 @@ export function evaluateAlerts(
       message: "L'application répond lentement : le service en salle va s'en ressentir.",
       observed: `${snapshot.p95Ms} ms (p95)`,
       threshold: `${P95_LATENCY_THRESHOLD_MS} ms`,
+    });
+  }
+
+  // Sauvegardes. DEC-10's RPO is only a target until something checks it:
+  // an unverified backup schedule is discovered to have been broken on the
+  // day it is needed, which is the one day it cannot be fixed.
+  if (facts.lastBackupAgeHours === null) {
+    alerts.push({
+      id: "backup_missing",
+      severity: "critical",
+      recipient: "astreinte",
+      message: "Aucune sauvegarde n'a été trouvée : le RPO de 24 h n'est pas tenu.",
+      observed: "aucune",
+      threshold: `${BACKUP_MAX_AGE_HOURS} h`,
+    });
+  } else if (facts.lastBackupAgeHours > BACKUP_MAX_AGE_HOURS) {
+    alerts.push({
+      id: "backup_overdue",
+      severity: "critical",
+      recipient: "astreinte",
+      message: "La dernière sauvegarde est trop ancienne : le RPO de 24 h n'est plus tenu.",
+      observed: `${facts.lastBackupAgeHours} h`,
+      threshold: `${BACKUP_MAX_AGE_HOURS} h`,
     });
   }
 

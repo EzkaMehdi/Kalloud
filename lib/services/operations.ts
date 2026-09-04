@@ -1,6 +1,7 @@
 import { pingDatabase, pool } from "../db";
 import { logger } from "../logger";
 import { evaluateAlerts, STALE_BUSINESS_DAY_HOURS, type OpsAlert } from "../observability/alerts";
+import { lastBackupAgeHours } from "../observability/backups";
 import { snapshotProcess, type ProcessSnapshot } from "../observability/collector";
 import {
   countClosingsSince,
@@ -30,12 +31,17 @@ export interface OperationsReport {
     openServicesOverdue: number;
     unexplainedVariances: number;
   };
+  backups: {
+    /** OPS-03: hours since the newest restorable backup, `null` when there is none. */
+    lastAgeHours: number | null;
+  };
   alerts: readonly OpsAlert[];
 }
 
 export async function getOperationsReport(): Promise<OperationsReport> {
   const snapshot = snapshotProcess();
   const since = new Date(Date.now() - LOOKBACK_HOURS * 3600 * 1000);
+  const backupAgeHours = await lastBackupAgeHours();
 
   let reachable = true;
   let staleOpenBusinessDays: Awaited<ReturnType<typeof listStaleOpenBusinessDays>> = [];
@@ -76,6 +82,7 @@ export async function getOperationsReport(): Promise<OperationsReport> {
       variance: row.cash_variance,
     })),
     closingsInWindow: closings,
+    lastBackupAgeHours: backupAgeHours,
   });
 
   return {
@@ -88,6 +95,7 @@ export async function getOperationsReport(): Promise<OperationsReport> {
       openServicesOverdue: staleOpenBusinessDays.length,
       unexplainedVariances: unexplained.length,
     },
+    backups: { lastAgeHours: backupAgeHours },
     alerts,
   };
 }

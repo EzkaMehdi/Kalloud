@@ -38,3 +38,7 @@ pnpm-debug.log*
 # Local certificates (dev only, never real production certs)
 certificates/*
 !certificates/.gitkeep
+
+# OPS-03: local backups. Dumps carry the whole database, password hashes and
+# audit trail included — they never belong in version control.
+/backups/

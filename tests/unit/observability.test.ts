@@ -9,6 +9,7 @@ import {
   snapshotProcess,
 } from "../../lib/observability/collector";
 import {
+  BACKUP_MAX_AGE_HOURS,
   evaluateAlerts,
   MIN_REQUESTS_FOR_RATE,
   P95_LATENCY_THRESHOLD_MS,
@@ -24,6 +25,7 @@ const healthy: OperationalFacts = {
   staleOpenBusinessDays: [],
   unexplainedVariances: [],
   closingsInWindow: 3,
+  lastBackupAgeHours: 3,
 };
 
 function record(count: number, statusCode: number, durationMs = 10, route = "/api/products") {
@@ -199,6 +201,42 @@ describe("OPS-02: alert thresholds", () => {
     record(30, 409, 10, "/api/checkout");
 
     expect(evaluateAlerts(snapshotProcess(), healthy)).toEqual([]);
+  });
+});
+
+describe("OPS-03: the backup RPO is checked, not assumed", () => {
+  it("says nothing while backups are fresh", () => {
+    expect(
+      alertIds(evaluateAlerts(snapshotProcess(), { ...healthy, lastBackupAgeHours: 20 })),
+    ).toEqual([]);
+  });
+
+  it("tolerates a scheduler that drifts by a few minutes", () => {
+    // DEC-10's RPO is 24 h; the check allows a small margin so a nightly
+    // job running at 03:00 does not page anyone for being late by an hour.
+    expect(
+      alertIds(evaluateAlerts(snapshotProcess(), { ...healthy, lastBackupAgeHours: 25 })),
+    ).toEqual([]);
+  });
+
+  it("raises the moment the RPO is genuinely missed", () => {
+    const alert = evaluateAlerts(snapshotProcess(), {
+      ...healthy,
+      lastBackupAgeHours: BACKUP_MAX_AGE_HOURS + 1,
+    })[0];
+    expect(alert).toMatchObject({
+      id: "backup_overdue",
+      severity: "critical",
+      recipient: "astreinte",
+    });
+  });
+
+  it("treats no backup at all as its own, unmissable failure", () => {
+    // Distinct from "overdue" on purpose: a schedule that never ran once is
+    // a different problem from one that stopped, and the person reading the
+    // alert at 3am should not have to work out which.
+    const alert = evaluateAlerts(snapshotProcess(), { ...healthy, lastBackupAgeHours: null })[0];
+    expect(alert).toMatchObject({ id: "backup_missing", severity: "critical" });
   });
 });
 

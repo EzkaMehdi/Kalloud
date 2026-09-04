@@ -89,3 +89,64 @@ describe("API-01: route handlers validate every request body against a schema", 
     ).toBe(false);
   });
 });
+
+/**
+ * OPS-08's injection axis, kept closed by a static check rather than by a
+ * one-off review.
+ *
+ * Every filter value in this codebase reaches SQL as a bound parameter —
+ * the `where` builders push onto `values` and emit `$n` — so the audit
+ * found no injection path. What it cannot do is stay true on its own: the
+ * next `${filters.something}` dropped into a query template would be one,
+ * and it would read exactly like the safe interpolations around it.
+ *
+ * So the interpolations that exist are enumerated. A new one fails this
+ * test, which is the point: it forces a deliberate look rather than a
+ * silent addition. Everything listed is either a module-level SQL constant
+ * or a placeholder index computed from the parameter array — never a value
+ * that came from a request.
+ */
+const REVIEWED_SQL_INTERPOLATIONS = new Set([
+  // Composed clause fragments; every value they reference is a $n bound parameter.
+  "where",
+  "limitClause",
+  // Placeholder indices, not data.
+  "values.length + 1",
+  "values.length + 2",
+  // Module-level SQL constants.
+  "NET_PER_ORDER",
+  "TABLE_WITH_OPEN_ORDER",
+  "TAX_RESOLUTION_JOIN",
+  "TICKET_SELECT",
+]);
+
+describe("OPS-08: no request value is ever interpolated into SQL", () => {
+  const productionFiles = [
+    ...listFilesRecursively(join(process.cwd(), "lib")),
+    ...listFilesRecursively(join(process.cwd(), "app")),
+  ];
+
+  it("finds production files to check", () => {
+    expect(productionFiles.length).toBeGreaterThan(0);
+  });
+
+  it("interpolates only reviewed, non-request expressions", () => {
+    const unexpected: string[] = [];
+    for (const file of productionFiles) {
+      const content = readFileSync(file, "utf8");
+      // No `s` flag: `[^`]` already matches newlines, and the flag needs a newer target.
+      for (const call of content.matchAll(/\.query[^(]*\(\s*`([^`]*)`/g)) {
+        for (const interpolation of call[1].matchAll(/\$\{([^}]+)\}/g)) {
+          const expression = interpolation[1].trim();
+          if (!REVIEWED_SQL_INTERPOLATIONS.has(expression)) {
+            unexpected.push(`${file.replace(process.cwd() + "/", "")}: \${${expression}}`);
+          }
+        }
+      }
+    }
+    expect(
+      unexpected,
+      "Nouvelle interpolation SQL. Si l'expression ne peut pas porter une valeur de requête, ajoutez-la à REVIEWED_SQL_INTERPOLATIONS ; sinon, passez par un paramètre lié $n.",
+    ).toEqual([]);
+  });
+});

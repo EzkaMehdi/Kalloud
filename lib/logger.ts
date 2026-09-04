@@ -48,10 +48,41 @@ const SENSITIVE_KEYS = new Set([
   "cookie",
 ]);
 
+/**
+ * OPS-08: redaction walks the whole structure, not just the top level.
+ *
+ * Nothing logs a nested object today — every call site passes scalars — so
+ * this closes a hazard rather than a leak. But `LogFields` is
+ * `Record<string, unknown>`, and the first `logger.info("…", { body })`
+ * someone writes would print a password in plaintext, in the one module
+ * whose stated contract is that it never does (OPS-01, DEC-10). A guard
+ * that only holds while everyone remembers is not a guard.
+ *
+ * Depth-capped so a cyclic or pathological object cannot turn a log line
+ * into a hang.
+ */
+const MAX_REDACT_DEPTH = 6;
+
+function redactValue(value: unknown, depth: number): unknown {
+  if (depth > MAX_REDACT_DEPTH) return "[truncated]";
+  if (Array.isArray(value)) return value.map((entry) => redactValue(entry, depth + 1));
+  if (value && typeof value === "object") {
+    // Errors and dates carry no key/value shape worth walking, and
+    // stringifying them here is what every call site already expects.
+    if (value instanceof Error || value instanceof Date) return value;
+    const safe: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      safe[key] = SENSITIVE_KEYS.has(key) ? "[redacted]" : redactValue(nested, depth + 1);
+    }
+    return safe;
+  }
+  return value;
+}
+
 function redact(fields: LogFields): LogFields {
   const safe: LogFields = {};
   for (const [key, value] of Object.entries(fields)) {
-    safe[key] = SENSITIVE_KEYS.has(key) ? "[redacted]" : value;
+    safe[key] = SENSITIVE_KEYS.has(key) ? "[redacted]" : redactValue(value, 1);
   }
   return safe;
 }

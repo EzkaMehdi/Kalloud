@@ -17,6 +17,15 @@ import { updateSettingsSchema } from "@/lib/validation/schemas";
  */
 export const GET = apiRoute(async () => {
   const context = await requireRequestContext();
+  // OPS-08: readable by OWNER and MANAGER, not by everyone. `settings:manage`
+  // is the *write* permission (OWNER only); the read is gated on
+  // `tables:manage`, which is already what the navigation uses to decide who
+  // may open the configuration screen at all. Left ungated, a cashier could
+  // read `cashDiscrepancyThreshold` — the amount below which a till gap
+  // needs no written justification (CASH-05), which is precisely the number
+  // someone shaving the drawer would want. No cashier-facing screen calls
+  // this endpoint.
+  requirePermission(context.role, "tables:manage");
   return jsonOk(await getConfiguration(context));
 });
 

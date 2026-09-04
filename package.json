@@ -24,6 +24,7 @@
     "db:reset": "node --env-file=.env scripts/reset-db.mjs",
     "db:backup": "node --env-file=.env scripts/backup.mjs",
     "db:restore": "node --env-file=.env scripts/restore.mjs",
+    "data:request": "node --env-file=.env scripts/data-request.mjs",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",

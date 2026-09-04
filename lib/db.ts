@@ -26,14 +26,73 @@ function createPool(): Pool {
   return new Pool({ connectionString, max: 10 });
 }
 
-// Next.js' dev server reloads route modules on every change; without this,
-// each reload would create a brand new Pool (and eventually exhaust
-// Postgres' max_connections) instead of reusing the same one.
-export const pool: Pool = globalThis.__kalloudPgPool ?? createPool();
-
-if (process.env.NODE_ENV !== "production") {
-  globalThis.__kalloudPgPool = pool;
+function resolvePool(): Pool {
+  // Next.js' dev server reloads route modules on every change; without this,
+  // each reload would create a brand new Pool (and eventually exhaust
+  // Postgres' max_connections) instead of reusing the same one.
+  const existing = globalThis.__kalloudPgPool;
+  if (existing) return existing;
+  const created = createPool();
+  if (process.env.NODE_ENV !== "production") globalThis.__kalloudPgPool = created;
+  return created;
 }
+
+/**
+ * The shared pool, created on first use rather than on import (OPS-05).
+ *
+ * It used to be built at module load, which quietly made `DATABASE_URL` a
+ * **build-time** requirement: `next build` imports every route module to
+ * collect page data, so the build failed with "DATABASE_URL is not set" on
+ * any machine without a `.env` — including a clean container image. Both CI
+ * and local development hid it by writing one first.
+ *
+ * That is the wrong coupling for a deployment. A production image should be
+ * buildable without production credentials: the build machine has no
+ * business holding the database password, and the release artifact must not
+ * depend on which database happened to be reachable when it was built. The
+ * connection is genuinely not needed until a request runs, so it is opened
+ * then — and the helpful error message survives, moved to first use.
+ *
+ * A Proxy rather than a `getPool()` function so every existing call site
+ * (`pool.query`, `pool.connect`, `withTransaction`) keeps working unchanged;
+ * methods are bound to the real pool so `this` stays correct.
+ *
+ * Every trap forwards, including the property-descriptor ones. That is not
+ * completeness for its own sake: `tests/integration/validation.test.ts`
+ * proves API-01's "avant l'accès base" by counting calls with
+ * `vi.spyOn(pool, "query")`, and a Proxy that only forwards `get`/`set`
+ * lets the spy be installed on the empty target while reads keep coming
+ * from the real pool — so it records nothing and the test silently observes
+ * zero queries for a checkout that ran. It caught this immediately.
+ */
+export const pool: Pool = new Proxy({} as Pool, {
+  get(_target, property, receiver) {
+    const actual = resolvePool();
+    const value = Reflect.get(actual, property, receiver);
+    return typeof value === "function" ? value.bind(actual) : value;
+  },
+  set(_target, property, value) {
+    return Reflect.set(resolvePool(), property, value);
+  },
+  has(_target, property) {
+    return Reflect.has(resolvePool(), property);
+  },
+  getOwnPropertyDescriptor(_target, property) {
+    return Reflect.getOwnPropertyDescriptor(resolvePool(), property);
+  },
+  defineProperty(_target, property, descriptor) {
+    return Reflect.defineProperty(resolvePool(), property, descriptor);
+  },
+  deleteProperty(_target, property) {
+    return Reflect.deleteProperty(resolvePool(), property);
+  },
+  ownKeys() {
+    return Reflect.ownKeys(resolvePool());
+  },
+  getPrototypeOf() {
+    return Reflect.getPrototypeOf(resolvePool());
+  },
+});
 
 /**
  * Runs `fn` with a single checked-out client wrapped in BEGIN/COMMIT, rolling

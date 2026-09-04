@@ -2,6 +2,7 @@
   "name": "kalloud",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@10.34.5",
   "type": "module",
   "engines": {
     "node": ">=20.9.0"
@@ -25,6 +26,7 @@
     "db:backup": "node --env-file=.env scripts/backup.mjs",
     "db:restore": "node --env-file=.env scripts/restore.mjs",
     "data:request": "node --env-file=.env scripts/data-request.mjs",
+    "check:env": "node scripts/check-env.mjs",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",
@@ -53,5 +55,10 @@
     "prettier": "^3.9.6",
     "typescript": "5.9.3",
     "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "nanoid": "^3.3.18"
+    }
   }
 }

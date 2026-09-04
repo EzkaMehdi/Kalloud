@@ -1,0 +1,12 @@
+# Anything that would make the image non-reproducible, larger, or unsafe.
+node_modules
+.next
+.git
+.github
+backups
+test-results
+playwright-report
+.env
+.env.*
+!.env.example
+*.log

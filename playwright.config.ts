@@ -56,6 +56,10 @@ export default defineConfig({
       // "unknown" for every test). Raised only for this dedicated e2e
       // server process — dev and production keep the real default.
       AUTH_RATE_LIMIT_MAX: "1000",
+      // OPS-02: the operations endpoint refuses when no token is set, so
+      // the suite needs one to prove both halves — that a caller with the
+      // token is served, and that one without it is not.
+      OPS_METRICS_TOKEN: "e2e-ops-token",
     },
   },
 });

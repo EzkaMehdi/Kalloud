@@ -9,6 +9,7 @@ import {
   type ValidationIssue,
 } from "./errors";
 import { getRequestId, logger, runWithRequestContext } from "./logger";
+import { recordRequest } from "./observability/collector";
 
 /**
  * Wraps every Route Handler (FND-09): generates/propagates a request id,
@@ -29,14 +30,19 @@ export function apiRoute<Context>(
       const startedAt = Date.now();
       try {
         const response = await handler(request, context);
+        const durationMs = Date.now() - startedAt;
         response.headers.set("x-request-id", requestId);
-        logger.info("request completed", {
-          statusCode: response.status,
-          durationMs: Date.now() - startedAt,
-        });
+        logger.info("request completed", { statusCode: response.status, durationMs });
+        // OPS-02: counted here, the one place every route already passes
+        // through, so availability/latency/errors cannot be measured for
+        // some endpoints and silently not for others.
+        recordRequest(route, response.status, durationMs);
         return response;
       } catch (error) {
-        return toErrorResponse(error, requestId, Date.now() - startedAt);
+        const durationMs = Date.now() - startedAt;
+        const response = toErrorResponse(error, requestId, durationMs);
+        recordRequest(route, response.status, durationMs);
+        return response;
       }
     });
   };

@@ -1093,20 +1093,28 @@ Le modèle d’isolation est construit avant les nouveaux flux métier afin d’
   - Trouvaille inattendue : `pnpm lint` remontait **19 avertissements qui ne venaient pas du projet**. Un worktree périmé sous `.claude/`, exclu de git mais pas d'ESLint, était scanné comme du code du dépôt — instantané d'une session antérieure, avec des imports et des `console` que le code actuel a depuis corrigés. Il a même produit un faux constat pendant cet audit. `.claude/**` et `backups/**` sont désormais ignorés, et `pnpm lint` passe à **0 avertissement, 0 erreur**, ce qu'il n'avait jamais fait.
   - Vérifié aussi, sans rien trouver : aucune table du schéma n'est absente du code, aucun module de `lib/` ou `components/` n'est orphelin, et il ne reste aucun `TODO`/`FIXME`/`@deprecated` (les deux occurrences de « legacy » et « supprimer » sont de la prose dans des commentaires explicatifs).
 
-- [ ] **`REL-01` — Exécuter la gate de sortie MVP**
+- [x] **`REL-01` — Exécuter la gate de sortie MVP**
   - Priorité : `P0`
   - Dépend de : `SAAS-02`, `OPS-02`, `OPS-03`, `OPS-04`, `OPS-06B`, `OPS-07`, `OPS-08B`, `OPS-09`, `CLEAN-01`
   - Livrable : rapport de release et décision Go/No-Go.
   - Acceptation : `GATE-0`, `GATE-1`, `GATE-2`, `GATE-3`, `GATE-4A`, `GATE-4B`, `GATE-5` et `GATE-6` validées ; critères de `GATE-7` vérifiés ; aucun `P0` ni `P1` du MVP ouvert ; rollback disponible.
+  - **Décision : GO pour le pilote**, sous six conditions de déploiement. Rapport complet dans [`docs/rapport-release-mvp.md`](./docs/rapport-release-mvp.md).
+  - 117 tickets terminés, **aucun `P0` ni `P1` ouvert**. Les huit premières portes sont validées ; `GATE-7` l'est à **cinq critères sur six**, le sixième — « le gérant pilote une journée complète et explique ventes, caisse et stock » — ne pouvant pas être vérifié avant le pilote puisqu'il *est* le pilote. Le cocher d'avance aurait été une fausse déclaration.
+  - Un critère de `GATE-7` a demandé du travail réel plutôt qu'une case : « les parcours complets passent sur mobile, tablette et desktop » n'était prouvé par rien. `OPS-07` mesurait le contraste et le débordement sur des écrans **au repos**, `OPS-06` faisait le parcours entier mais à **une seule largeur** ; ni l'un ni l'autre ne disait si on peut *tenir un service* sur un téléphone. `tests/e2e/parcours-mobile.spec.ts` fait donc la journée complète à 375 et 768 px — inscription, configuration, ouverture, vente, stock, clôture.
+  - Une fausse alerte écartée au passage : ma première version exigeait `toBeInViewport()` sur le bouton d'encaissement et sur celui de clôture, et échouait à 375 px. Vérification faite — mesures dans le dialogue, puis à l'œil sur une capture — la feuille de caisse défile normalement (`max-height: 94vh; overflow: auto`) et le clic aboutit : faire défiler pour atteindre un bouton est le geste attendu sur un téléphone. C'est l'assertion qui était trop stricte, pas le produit ; corrigée plutôt que de « réparer » un comportement correct.
+  - Chaîne de qualité au moment de la décision : `lint` **0 avertissement**, `format`, `typecheck`, **692 tests** unit+intégration, **130 tests e2e**, parcours complet sur base non semée, `build`, `audit --audit-level=high` propre.
+  - Rollback disponible aux trois niveaux et tous exercés : version applicative (la sonde de disponibilité distingue « déploiement inachevé » de « rollback » et retire le conteneur du trafic sans tuer le processus), données (`pnpm db:restore`, empreinte vérifiée avant toute destruction), client (export puis anonymisation, purge refusée tant que courent les six ans comptables).
+  - Six conditions au GO, à traiter au déploiement et non après : calendrier d'astreinte **nominatif** (une rotation sans nom par semaine veut dire personne) ; TLS, domaine et reverse proxy avec `X-Forwarded-Proto` ; vrais secrets (`pnpm check:env` refuse les valeurs de développement) ; stockage de sauvegardes chiffré hors machine, avec l'alerte de fraîcheur vérifiée la première semaine ; une sauvegarde **avant chaque déploiement portant une migration** ; et `pnpm check:pilote` après la mise en service comme après chaque restauration.
+  - Nommé plutôt que supposé résolu : aucun lecteur d'écran réel testé, aucun transport de courrier (ni invitation, ni lien de réinitialisation, ni routage d'alerte), pas de TLS ni de domaine réels, sauvegardes en clair sur disque en local, zoom 200 % et `prefers-reduced-motion` non audités, et les horodatages affichés dans le fuseau du navigateur plutôt que dans celui de l'établissement.
 
 ### `GATE-7` — MVP pilote
 
-- [ ] Un client peut être onboardé sans intervention en base.
-- [ ] Les trois rôles disposent uniquement de leurs permissions.
-- [ ] Sauvegarde, restauration, logs, alertes et rollback sont opérationnels.
-- [ ] Les parcours complets passent sur mobile, tablette et desktop.
-- [ ] Aucun `P0`, aucune vulnérabilité critique/élevée et aucun mock silencieux ne restent ouverts.
-- [ ] Le gérant pilote une journée complète et explique ventes, caisse et stock.
+- [x] Un client peut être onboardé sans intervention en base. (`SAAS-01`/`OPS-06` — `pnpm test:e2e:fresh` fait le parcours complet sur une base **migrée et non semée**)
+- [x] Les trois rôles disposent uniquement de leurs permissions. (`OPS-06B` fait travailler chaque rôle une journée entière ; `OPS-08`/`OPS-08B` vérifient les refus serveur, lectures comprises)
+- [x] Sauvegarde, restauration, logs, alertes et rollback sont opérationnels. (`OPS-01`/`OPS-02`/`OPS-03`/`OPS-05` — exercice de restauration rejoué à chaque suite, rollback détecté par la sonde de disponibilité)
+- [x] Les parcours complets passent sur mobile, tablette et desktop. (`OPS-07` pour les écrans, `tests/e2e/parcours-mobile.spec.ts` pour la journée entière à 375 et 768 px)
+- [x] Aucun `P0`, aucune vulnérabilité critique/élevée et aucun mock silencieux ne restent ouverts. (0 ticket `P0`/`P1` ouvert, `OPS-08`/`OPS-08B` sans finding critique/élevé, `pnpm audit` propre)
+- [ ] Le gérant pilote une journée complète et explique ventes, caisse et stock. — **ne peut pas être vérifié avant le pilote : c'est le pilote**. À constater le premier jour, avec le gérant ([rapport de release](./docs/rapport-release-mvp.md)).
 
 ---
 

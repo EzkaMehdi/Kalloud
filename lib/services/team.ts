@@ -15,7 +15,7 @@ import {
   type MemberStatus,
   type TeamMemberRow,
 } from "../repositories/memberships";
-import type { InviteMemberBody, UpdateMemberBody } from "../validation/schemas";
+import type { InviteMemberBody } from "../validation/schemas";
 
 /**
  * SAAS-02: the establishment's team, administered by its owner alone

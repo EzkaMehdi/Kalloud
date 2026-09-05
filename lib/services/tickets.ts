@@ -318,16 +318,6 @@ function mergeByProduct(items: SaveTicketItemsBody["items"]): MergedTicketItem[]
   return [...merged.values()].sort((left, right) => left.productId - right.productId);
 }
 
-/** Total of a ticket's lines in cents, for callers that need to compare against a payment split. */
-export function ticketTotalCents(ticket: Ticket): number {
-  return ticket.items.reduce((sum, item) => sum + toCents(item.unit_price) * item.quantity, 0);
-}
-
-/** Formats a cents total back into the DECIMAL string shape the API returns. */
-export function formatTicketTotal(cents: number): string {
-  return fromCents(cents);
-}
-
 /**
  * ORD-11: applies or clears a bounded discount on an open ticket.
  *

@@ -13,6 +13,11 @@ const config = [
       "test-results/**",
       "next-env.d.ts",
       "migrations/**",
+      // CLEAN-01: tooling scratch space, git-excluded, and not this project's
+      // code — a stale worktree here produced a phantom "unused import"
+      // finding during the dead-code audit that led to this line.
+      ".claude/**",
+      "backups/**",
     ],
   },
   ...nextCoreWebVitals,

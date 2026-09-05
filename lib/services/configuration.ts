@@ -232,10 +232,6 @@ export async function editProduct(
 /* CFG-03 — plan de salle                                                      */
 /* -------------------------------------------------------------------------- */
 
-export async function listConfigurableTables(context: RequestContext): Promise<DiningTableRow[]> {
-  return withTransaction((client) => listAllDiningTables(client, context.locationId));
-}
-
 export async function addDiningTable(
   context: RequestContext,
   input: CreateDiningTableBody,

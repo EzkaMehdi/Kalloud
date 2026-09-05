@@ -5,10 +5,6 @@ export type Role = "OWNER" | "MANAGER" | "CASHIER";
 
 export const ROLES: readonly Role[] = ["OWNER", "MANAGER", "CASHIER"];
 
-export function isRole(value: unknown): value is Role {
-  return typeof value === "string" && (ROLES as readonly string[]).includes(value);
-}
-
 /** UX-06: the one place role names are translated for display, so the UI never invents a second vocabulary. */
 export const ROLE_LABELS: Readonly<Record<Role, string>> = Object.freeze({
   OWNER: "Propriétaire",

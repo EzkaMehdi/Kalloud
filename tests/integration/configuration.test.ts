@@ -4,7 +4,6 @@ import { can } from "../../lib/authz";
 import { pool } from "../../lib/db";
 import { ConflictError, NotFoundError, ValidationError } from "../../lib/errors";
 import { openBusinessDay } from "../../lib/repositories/business-days";
-import { listCategories } from "../../lib/repositories/categories";
 import { listProducts } from "../../lib/repositories/products";
 import { getLocationSettings } from "../../lib/repositories/settings";
 import { listAllDiningTables, listDiningTables } from "../../lib/repositories/tables";

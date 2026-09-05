@@ -27,6 +27,8 @@
     "db:restore": "node --env-file=.env scripts/restore.mjs",
     "data:request": "node --env-file=.env scripts/data-request.mjs",
     "check:env": "node scripts/check-env.mjs",
+    "check:pilote": "node --env-file=.env scripts/check-pilote.mjs",
+    "import:pilote": "node scripts/import-pilote.mjs",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",
